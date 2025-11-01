@@ -1,0 +1,18 @@
+# Local env file (should not be committed)
+.env
+
+# Virtual environment
+.venv/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+
+#uh this one too
+README_AUTH0_DEVICE_FLOW.md

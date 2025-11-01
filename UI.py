@@ -2,6 +2,49 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import json
 import os
+# Use top-level imports so the script can be run directly (python UI.py)
+try:
+    # Prefer direct imports when running as a standalone script
+    from create_user import create_user, Auth0Error
+    from auth_password import perform_password_grant
+except Exception:
+    # Fallback to relative imports when executed as a package
+    from .create_user import create_user, Auth0Error
+    from .auth_password import perform_password_grant
+
+
+def _format_auth0_error(info) -> str:
+    """Convert various Auth0 error shapes into a readable string."""
+    if info is None:
+        return ""
+    if isinstance(info, str):
+        return info
+    if isinstance(info, (int, float)):
+        return str(info)
+    if isinstance(info, list):
+        parts = [_format_auth0_error(i) for i in info]
+        return "; ".join(p for p in parts if p)
+    if isinstance(info, dict):
+        # Prefer common message keys
+        for key in ("description", "error_description", "message", "error", "msg"):
+            v = info.get(key)
+            if v:
+                return _format_auth0_error(v)
+        # Otherwise flatten dict into key: value pieces
+        parts = []
+        for k, v in info.items():
+            parts.append(f"{k}: {_format_auth0_error(v)}")
+        return "; ".join(parts)
+    # Fallback
+    try:
+        return str(info)
+    except Exception:
+        return repr(info)
+
+
+def _error_has_keywords(info, keywords):
+    s = _format_auth0_error(info).lower()
+    return any(kw in s for kw in keywords)
 
 class CarParkingApp:
     def __init__(self):
@@ -11,25 +54,8 @@ class CarParkingApp:
         self.root.resizable(False, False)
         self.root.configure(bg='#0f172a')
         
-        # File to store user credentials
-        self.users_file = "users.json"
-        self.load_users()
-        
         # Show login page
         self.show_login_page()
-        
-    def load_users(self):
-        """Loading users from JSON file"""
-        if os.path.exists(self.users_file):
-            with open(self.users_file, 'r') as f:
-                self.users = json.load(f)
-        else:
-            self.users = {}
-    
-    def save_users(self):
-        """Save users to JSON file"""
-        with open(self.users_file, 'w') as f:
-            json.dump(self.users, f, indent=4)
     
     def clear_window(self):
         """Clear all widgets from the window"""
@@ -97,8 +123,10 @@ class CarParkingApp:
             messagebox.showerror("Error", "Please enter both username and password!")
             return
         
-        if username in self.users and self.users[username] == password:
-            self.show_main_page(username)
+        tokens = perform_password_grant(username, password)
+        if tokens:
+            id_token = tokens.get("id_token")
+            self.show_main_page(id_token)
         else:
             messagebox.showerror("Error", "Invalid username or password!")
     
@@ -167,21 +195,29 @@ class CarParkingApp:
             messagebox.showerror("Error", "Please fill in all fields!")
             return
         
-        if username in self.users:
-            messagebox.showerror("Error", "Username already exists!")
-            return
-        
         if password != confirm:
             messagebox.showerror("Error", "Passwords do not match!")
             return
         
-        if len(password) < 4:
-            messagebox.showerror("Error", "Password must be at least 4 characters!")
+        try:
+            create_user(username, password, os.getenv("AUTH0_REALM", "Username-Password-Authentication"))
+        except Auth0Error as e:
+            info = e.info if hasattr(e, 'info') else {}
+            # Format error into readable text
+            formatted = _format_auth0_error(info)
+            # Detect common cases
+            if _error_has_keywords(formatted, ["invalid"]):
+                user_msg = "Username already exists!"
+            elif _error_has_keywords(formatted, ["length"]):
+                user_msg = "Weak password: must have: 8 characters, a number, a capital letter, and a symbol."
+            elif _error_has_keywords(formatted, ["email"]):
+                user_msg = "Username must be an email!"
+            else:
+                # Generic fallback shows the formatted message
+                user_msg = formatted or "Failed to create user"
+
+            messagebox.showerror("Error", f"Failed to create user: {user_msg}")
             return
-        
-        # Save new user
-        self.users[username] = password
-        self.save_users()
         
         messagebox.showinfo("Success", "Registration successful! You can now login.")
         self.show_login_page()

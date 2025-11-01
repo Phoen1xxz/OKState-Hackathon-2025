@@ -13,6 +13,3 @@ __pycache__/
 
 # OS files
 .DS_Store
-
-#uh this one too
-README_AUTH0_DEVICE_FLOW.md

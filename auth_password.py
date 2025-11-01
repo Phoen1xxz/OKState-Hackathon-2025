@@ -74,7 +74,18 @@ def perform_password_grant(username: str, password: str) -> Optional[dict]:
         return None
 
     if resp.status_code == 200:
-        return body
+        domain = AUTH0_DOMAIN
+        access = body.get("access_token")
+        id_token = body.get("id_token")
+        if access and domain:
+            try:
+                resp = requests.get(f"https://{domain}/userinfo", headers={"Authorization": f"Bearer {access}"}, timeout=5)
+                if resp.ok:
+                    data = resp.json()
+                    return data.get("sub")
+            except Exception:
+                pass
+        return 
 
     # Common errors: invalid_grant (bad credentials), unauthorized_client, invalid_request
     print("Error from Auth0 token endpoint:")

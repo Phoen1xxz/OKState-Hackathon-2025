@@ -2,16 +2,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import json
 import os
-# Use top-level imports so the script can be run directly (python UI.py)
-try:
-    # Prefer direct imports when running as a standalone script
-    from create_user import create_user, Auth0Error
-    from auth_password import perform_password_grant
-except Exception:
-    # Fallback to relative imports when executed as a package
-    from .create_user import create_user, Auth0Error
-    from .auth_password import perform_password_grant
-
+from create_user import create_user, Auth0Error
+from auth_password import perform_password_grant
+from get_metadata import get_metadata, set_metadata
 
 def _format_auth0_error(info) -> str:
     """Convert various Auth0 error shapes into a readable string."""
@@ -123,10 +116,11 @@ class CarParkingApp:
             messagebox.showerror("Error", "Please enter both username and password!")
             return
         
-        tokens = perform_password_grant(username, password)
-        if tokens:
-            id_token = tokens.get("id_token")
-            self.show_main_page(id_token)
+        id = perform_password_grant(username, password)
+        if id:
+            self.show_main_page(id)
+            print("HIIIIIIIIII")
+            
         else:
             messagebox.showerror("Error", "Invalid username or password!")
     
@@ -184,7 +178,7 @@ class CarParkingApp:
         # Back to Login Button
         back_btn = tk.Button(buttons_frame, text="Back to Login", font=("Arial", 14, "bold"), bg='#6366f1', fg='black', width=15, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#4f46e5', activeforeground='#ffffff', command=self.show_login_page)
         back_btn.grid(row=0, column=1, padx=10, pady=10)
-    
+
     def register_user(self):
         """Handle user registration"""
         username = self.new_username_entry.get().strip()
@@ -218,11 +212,10 @@ class CarParkingApp:
 
             messagebox.showerror("Error", f"Failed to create user: {user_msg}")
             return
-        
-        messagebox.showinfo("Success", "Registration successful! You can now login.")
-        self.show_login_page()
+        id = perform_password_grant(username, password)
+        self.show_permit_page(id)
     
-    def show_main_page(self, username):
+    def show_main_page(self, user_id):
         """Display the main parking system page after login"""
         self.clear_window()
         self.root.configure(bg='#0c4a6e')  # Deep ocean blue background
@@ -239,7 +232,109 @@ class CarParkingApp:
         # Logout button
         logout_btn = tk.Button(self.root, text="Logout", font=("Arial", 13, "bold"), bg='#ef4444', fg='black', width=18, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#dc2626', activeforeground='#ffffff', command=self.show_login_page)
         logout_btn.pack(pady=30)
+        # temp button
+        a_btn = tk.Button(self.root, text="SFAKDOJWFAJW", font=("Arial", 13, "bold"), bg='#ef4444', fg='black', width=18, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#dc2626', activeforeground='#ffffff', command=self.show_permit_page(user_id))
+        a_btn.pack(pady=30)
 
+    def show_permit_page(self, id):
+        self.clear_window()
+        self.root.configure(bg='#0c4a6e')
+
+        # Title
+        title_label = tk.Label(self.root, text="Current Permits", font=("Arial", 26, "bold"), bg='#0c4a6e', fg='#7dd3fc')
+        title_label.pack(pady=50)
+
+        self.staffVal = tk.BooleanVar(value=False)
+        self.GCVal = tk.BooleanVar(value=False)
+        self.SCVal = tk.BooleanVar(value=False)
+        self.RHVal = tk.BooleanVar(value=False)
+        self.ADAVal = tk.BooleanVar(value=False)
+
+        permits = get_metadata(id, "permits")
+        messagebox.showerror("ERROR", permits)
+        if permits[0] == '1':
+            self.staffVal = tk.BooleanVar(value=True)
+        if permits[1] == '1':
+            self.GCVal = tk.BooleanVar(value=True)
+        if permits[2] == '1':
+            self.SCVal = tk.BooleanVar(value=True)
+        if permits[3] == '1':
+            self.RHVal = tk.BooleanVar(value=True)
+        if permits[4] == '1':
+            self.ADAVal = tk.BooleanVar(value=True)
+        
+        permit_staff = tk.Checkbutton(
+            self.root,
+            text="Permit1",
+            variable=self.permit1_var,
+            onvalue=True,
+            offvalue=False,
+            font=("Arial", 14),
+            bg='#0c4a6e',
+            fg='#e6f7ff',
+            selectcolor='#0c4a6e'
+        )
+        permit_staff.pack(pady=10)
+        permit_GC = tk.Checkbutton(
+            self.root,
+            text="Permit1",
+            variable=self.permit1_var,
+            onvalue=True,
+            offvalue=False,
+            font=("Arial", 14),
+            bg='#0c4a6e',
+            fg='#e6f7ff',
+            selectcolor='#0c4a6e'
+        )
+        permit_GC.pack(pady=10)
+        permit_SC = tk.Checkbutton(
+            self.root,
+            text="Permit1",
+            variable=self.permit1_var,
+            onvalue=True,
+            offvalue=False,
+            font=("Arial", 14),
+            bg='#0c4a6e',
+            fg='#e6f7ff',
+            selectcolor='#0c4a6e'
+        )
+        permit_SC.pack(pady=10)
+        permit_RH = tk.Checkbutton(
+            self.root,
+            text="Permit1",
+            variable=self.permit1_var,
+            onvalue=True,
+            offvalue=False,
+            font=("Arial", 14),
+            bg='#0c4a6e',
+            fg='#e6f7ff',
+            selectcolor='#0c4a6e'
+        )
+        permit_RH.pack(pady=10)
+        permit_ADA = tk.Checkbutton(
+            self.root,
+            text="Permit1",
+            variable=self.permit1_var,
+            onvalue=True,
+            offvalue=False,
+            font=("Arial", 14),
+            bg='#0c4a6e',
+            fg='#e6f7ff',
+            selectcolor='#0c4a6e'
+        )
+        permit_ADA.pack(pady=10)
+        # Save button
+        save_btn = tk.Button(self.root, text="Confirm", font=("Arial", 13, "bold"), bg='#ef4444', fg='black', width=18, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#dc2626', activeforeground='#ffffff', command=self.update_permits(self.staffVal, self.GCVal, self.SCVal, self.RHVal, self.ADAVal))
+        save_btn.pack(pady=30)
+    
+    def update_permits(self, v1, v2, v3, v4, v5):
+        v1 = '1' if v1 else '0'
+        v2 = '1' if v2 else '0'
+        v3 = '1' if v3 else '0'
+        v4 = '1' if v4 else '0'
+        v5 = '1' if v5 else '0'
+
+        set_metadata(id, "permits", v1+v2+v3+v4+v5)
     
     def run(self):
         """Start the application"""

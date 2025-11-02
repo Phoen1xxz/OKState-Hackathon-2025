@@ -861,7 +861,7 @@ class MainWindow(QMainWindow):
     """Main application window"""
     def __init__(self):
         super().__init__()
-        self.filters = [False, False, False, False, False, False]
+        self.filters = [False, False, False, True, False, False]
         self.setWindowTitle("OKState Campus Map - PySide6")
         self.setGeometry(100, 100, 1200, 800)
         # Store last searched destination for click handlers
@@ -925,7 +925,7 @@ class MainWindow(QMainWindow):
         act_cars = QAction("Cars", self)
         act_motor = QAction("Motorcycle", self)
         act_bike = QAction("Bike Lane", self)
-        act_nearest = QAction("Show Nearest", self)
+        act_nearest = QAction("Show Nearest ✔", self)
         act_full = QAction("Show Full Lots", self)
         act_permits = QAction("Show All Permits", self)
         self.filter_menu.addAction(act_cars)
@@ -1333,14 +1333,16 @@ class MainWindow(QMainWindow):
                     spot_passes.add('ada')
 
                 active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
-                if (not active_passes or (spot_passes & active_passes) or self.filters[5]):
+                if (not active_passes or (spot_passes & active_passes) or self.filters[5]) and (self.filters[4] or p['capacity'] > 0):
                     d = self._haversine_km(dest_lat, dest_lon, p['lat'], p['lon'])
                     enriched.append({
                         'name': p['name'], 'lat': p['lat'], 'lon': p['lon'], 'capacity': p['capacity'], 'available': p['available'], 'distance_km': d, 'passes': list(spot_passes)
                     })
 
             enriched.sort(key=lambda x: x['distance_km'])
-            top3 = enriched[:3]
+            top3 = enriched
+            if self.filters[3]:
+                top3 = enriched[:3]
 
             def color_for_avail(a):
                 if a > 7:

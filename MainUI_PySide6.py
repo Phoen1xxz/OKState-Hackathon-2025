@@ -796,7 +796,7 @@ class MainWindow(QMainWindow):
     """Main application window"""
     def __init__(self):
         super().__init__()
-        self.filters = [False, False, False, False, False, False]
+        self.filters = [False, False, False, True, False, False]
         self.setWindowTitle("OKState Campus Map - PySide6")
         self.setGeometry(100, 100, 1200, 800)
         # Store last searched destination for click handlers
@@ -860,7 +860,7 @@ class MainWindow(QMainWindow):
         act_cars = QAction("Cars", self)
         act_motor = QAction("Motorcycle", self)
         act_bike = QAction("Bike Lane", self)
-        act_nearest = QAction("Show Nearest", self)
+        act_nearest = QAction("Show Nearest ✔", self)
         act_full = QAction("Show Full Lots", self)
         act_permits = QAction("Show All Permits", self)
         self.filter_menu.addAction(act_cars)
@@ -981,106 +981,79 @@ class MainWindow(QMainWindow):
         # Initialize selected passes (load from settings if exists)
         self.selected_passes = self.load_passes()
 
-        # Replace previous POI approach: load parking locations from JSON if present, else use defaults.
-        # Preferred path: repo-level app/data/parking.json
-        self.parking_places = []
-        _loaded = None
-        try:
-            candidates = [
-                # Prefer the website's shared data first
-                Path(__file__).parent.parent / "app" / "data" / "parking.json",
-                # Fallbacks
-                Path("code") / "parking.json",
-                Path("parking.json"),
-                Path(__file__).parent / "parking.json",
-            ]
-            for pth in candidates:
-                try:
-                    if pth.exists():
-                        with open(pth, 'r') as f:
-                            _loaded = json.load(f)
-                        break
-                except Exception:
-                    pass
-        except Exception:
-            _loaded = None
-
-        if isinstance(_loaded, list) and _loaded:
-            self.parking_places = _loaded
-        else:
-            self.parking_places = [
-                {
-                    "name": "Student Union Garage",
-                    "lat": 36.1264,
-                    "lon": -97.0867,
-                    "capacity": 400,
-                    "available": 2,
-                    "passes": ["staff", "green_commuter", "silver_commuter"]
-                },
-                {
-                    "name": "Colvin Recreation Center",
-                    "lat": 36.1287,
-                    "lon": -97.0818,
-                    "capacity": 250,
-                    "available": 40,
-                    "passes": ["staff", "green_commuter"]
-                },
-                {
-                    "name": "University Commons West",
-                    "lat": 36.1287,
-                    "lon": -97.0664,
-                    "capacity": 300,
-                    "available": 55,
-                    "passes": ["residence_hall", "staff"]
-                },
-                {
-                    "name": "Drummond Hall Lot",
-                    "lat": 36.1260,
-                    "lon": -97.0701,
-                    "capacity": 120,
-                    "available": 3,
-                    "passes": ["staff", "silver_commuter"]
-                },
-                {
-                    "name": "Physical Sciences Building Lot",
-                    "lat": 36.1242,
-                    "lon": -97.0664,
-                    "capacity": 180,
-                    "available": 18,
-                    "passes": ["staff", "green_commuter", "silver_commuter"]
-                },
-                {
-                    "name": "Boone Pickens Stadium Lot A",
-                    "lat": 36.1269,
-                    "lon": -97.0739,
-                    "capacity": 220,
-                    "available": 5,
-                    "passes": ["staff", "silver_commuter"]
-                },
-                {
-                    "name": "IT Building Lot",
-                    "lat": 36.1209,
-                    "lon": -97.0678,
-                    "capacity": 140,
-                    "available": 22,
-                    "passes": ["green_commuter", "silver_commuter"]
-                },
-                {
-                    "name": "Agricultural Hall Lot",
-                    "lat": 36.1277,
-                    "lon": -97.0712,
-                    "capacity": 200,
-                    "available": 28,
-                    "passes": ["staff", "green_commuter"]
-                },
-            ]
+        # Replace previous POI approach: use explicit parking locations provided by the user.
+        # User-provided primary locations (names kept minimal, coordinates provided). Longitudes use negative values for W.
+        self.parking_places = [
+            {
+                "name": "Student Union Garage", 
+                "lat": 36.1264, 
+                "lon": -97.0867, 
+                "capacity": 400, 
+                "available": 2,
+                "passes": ["staff", "green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Colvin Recreation Center", 
+                "lat": 36.1287, 
+                "lon": -97.0818, 
+                "capacity": 250, 
+                "available": 40,
+                "passes": ["staff", "green_commuter"]
+            },
+            {
+                "name": "University Commons West", 
+                "lat": 36.1287, 
+                "lon": -97.0664, 
+                "capacity": 300, 
+                "available": 55,
+                "passes": ["residence_hall", "staff"]
+            },
+            {
+                "name": "Drummond Hall Lot", 
+                "lat": 36.1260, 
+                "lon": -97.0701, 
+                "capacity": 120, 
+                "available": 3,
+                "passes": ["staff", "silver_commuter"]
+            },
+            {
+                "name": "Physical Sciences Building Lot", 
+                "lat": 36.1242, 
+                "lon": -97.0664, 
+                "capacity": 180, 
+                "available": 18,
+                "passes": ["staff", "green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Boone Pickens Stadium Lot A",
+                "lat": 36.1269,
+                "lon": -97.0739,
+                "capacity": 220,
+                "available": 5,
+                "passes": ["staff", "silver_commuter"]
+            },
+            {
+                "name": "IT Building Lot",
+                "lat": 36.1209,
+                "lon": -97.0678,
+                "capacity": 140,
+                "available": 22,
+                "passes": ["green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Agricultural Hall Lot",
+                "lat": 36.1277,
+                "lon": -97.0712,
+                "capacity": 200,
+                "available": 28,
+                "passes": ["staff", "green_commuter"]
+            },
+        ]
 
         for p in self.parking_places:
             cap = int(p.get('capacity', 0) or 0)
-            if 'ada_spots' not in p:
-                p['ada_spots'] = max(0, int(round(cap * 0.15)))
-            if 'motorcycle_spots' not in p:
-                p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
+            p['ada_spots'] = max(0, int(round(cap * 0.15)))
+            p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
 
         # Map widget (takes remaining space) - pass parking data so markers are shown
         self.map_widget = MapWidget(parking_places=self.parking_places)
@@ -1180,14 +1153,16 @@ class MainWindow(QMainWindow):
                     spot_passes.add('ada')
 
                 active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
-                if (not active_passes or (spot_passes & active_passes) or self.filters[5]):
+                if (not active_passes or (spot_passes & active_passes) or self.filters[5]) and (p['available'] > 0 or self.filters[4]):
                     d = self._haversine_km(dest_lat, dest_lon, p['lat'], p['lon'])
                     enriched.append({
                         'name': p['name'], 'lat': p['lat'], 'lon': p['lon'], 'capacity': p['capacity'], 'available': p['available'], 'distance_km': d, 'passes': list(spot_passes)
                     })
 
             enriched.sort(key=lambda x: x['distance_km'])
-            top3 = enriched[:3]
+            top3 = enriched
+            if self.filters[3]:
+                top3 = enriched[:3]
 
             def color_for_avail(a):
                 if a > 7:

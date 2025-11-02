@@ -729,12 +729,18 @@ class MainWindow(QMainWindow):
         self.filter_menu.addAction(act_permits)
 
         # Connect actions to the same handler
-        act_cars.triggered.connect(lambda: self.select_filter(0))
-        act_motor.triggered.connect(lambda: self.select_filter(1))
-        act_bike.triggered.connect(lambda: self.select_filter(2))
-        act_nearest.triggered.connect(lambda: self.select_filter(3))
-        act_full.triggered.connect(lambda: self.select_filter(4))
-        act_permits.triggered.connect(lambda: self.select_filter(5))
+        act_cars.triggered.connect(lambda: self.select_filter(0, act_cars))
+        act_motor.triggered.connect(lambda: self.select_filter(1, act_motor))
+        act_bike.triggered.connect(lambda: self.select_filter(2, act_bike))
+        act_nearest.triggered.connect(lambda: self.select_filter(3, act_nearest))
+        act_full.triggered.connect(lambda: self.select_filter(4, act_full))
+        act_permits.triggered.connect(lambda: self.select_filter(5, act_permits))
+        #act_cars.triggered.connect(lambda: self.select_filter(0))
+        #act_motor.triggered.connect(lambda: self.select_filter(1))
+        #act_bike.triggered.connect(lambda: self.select_filter(2))
+        #act_nearest.triggered.connect(lambda: self.select_filter(3))
+        #act_full.triggered.connect(lambda: self.select_filter(4))
+        #act_permits.triggered.connect(lambda: self.select_filter(5))
 
         # Show menu when button clicked (positioned below the button)
         self.filter_btn.clicked.connect(lambda: self.filter_menu.exec(self.filter_btn.mapToGlobal(QPoint(0, self.filter_btn.height()))))
@@ -853,7 +859,7 @@ class MainWindow(QMainWindow):
                 "lat": 36.1242, 
                 "lon": -97.0664, 
                 "capacity": 180, 
-                "available": 20,
+                "available": 0,
                 "passes": ["staff", "green_commuter", "silver_commuter"]
             },
         ]
@@ -933,7 +939,7 @@ class MainWindow(QMainWindow):
     # Filter menu is implemented as a QMenu (see setup near top bar). Old
     # toggle/show/hide methods for the previous FilterDropdown widget were removed.
     
-    def select_filter(self, filter_type):
+    def select_filter(self, filter_type, actionVal):
         """Handle filter selection"""
         print(f"Filter selected: {filter_type}")
         # Close the menu if it's open
@@ -944,7 +950,10 @@ class MainWindow(QMainWindow):
             pass
         # Toggle the filter
         self.filters[filter_type] = not self.filters[filter_type]
-
+        if self.filters[filter_type]:
+            actionVal.setText(actionVal.text() + " ✔")
+        else:
+            actionVal.setText(actionVal.text()[:-2])
         # If no destination is set yet, prompt user to search first
         if not getattr(self, '_last_destination', None):
             QMessageBox.information(self, "Filter", "Please search for a destination first.")
@@ -1146,7 +1155,7 @@ class MainWindow(QMainWindow):
             
             # If no passes are selected, show all spots
             # If passes are selected, only show spots that match at least one selected pass
-            if not active_passes or (spot_passes & active_passes):
+            if (not active_passes or (spot_passes & active_passes) or self.filters[5]) and (p['available'] > 0 or self.filters[4]):
                 d = self._haversine_km(dest_lat, dest_lon, p["lat"], p["lon"])
                 enriched.append({
                     "name": p["name"],

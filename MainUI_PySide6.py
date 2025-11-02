@@ -255,32 +255,74 @@ class PullUpWidget(QWidget):
         
     def on_parking_clicked(self, parking):
         """Handle when a parking spot button is clicked in the pull-up."""
-        # The parent MainWindow is accessible via self.parent_widget
         if not self.parent_widget:
             print("No parent window found")
             return
 
-        # Get destination coords from last search (stored in MainWindow)
         try:
             window = self.parent_widget
             dest = window._last_destination
             if not dest:
                 print("No destination found - please search first")
                 return
-            
+
             print(f"Using destination: {dest}")  # Debug
-            # Call JS to show the destination, selected parking, and distance line
-            window.map_widget.clear_highlights()  # Clear existing markers
-            window.map_widget.show_destination_and_parking(
-                dest['lat'], dest['lon'], 
-                dest['display_name'],
-                parking['lat'], parking['lon'],
-                f"{parking['name']} ({parking['available']}/{parking['capacity']} spots)",
-                parking['distance_km']
-            )
+            # Try real road routing via OSRM (no API key required)
+            route_coords = None
+            distance_km = None
+            duration_min = None
             try:
-                wmin = max(1, int(round((parking.get('distance_km', 0) or 0) / 5.0 * 60)))
-                info = QLabel(f"Selected: {parking['name']} — {parking['distance_km']:.2f} km (~{wmin} min walk) from {dest['display_name']}")
+                import requests
+                osrm_url = (
+                    f"https://router.project-osrm.org/route/v1/driving/"
+                    f"{parking['lon']},{parking['lat']};{dest['lon']},{dest['lat']}?overview=full&geometries=geojson"
+                )
+                resp = requests.get(osrm_url, timeout=6)
+                if resp.status_code == 200:
+                    body = resp.json()
+                    routes = (body or {}).get('routes') or []
+                    if routes:
+                        r = routes[0]
+                        geom = (((r or {}).get('geometry') or {}).get('coordinates')) or []
+                        # Convert [lon, lat] -> [lat, lon] for Leaflet
+                        route_coords = [[lat, lon] for lon, lat in geom]
+                        distance_km = float((r.get('distance') or 0.0)) / 1000.0
+                        duration_min = int(round(float((r.get('duration') or 0.0)) / 60.0))
+            except Exception as e:
+                print('OSRM routing failed:', e)
+
+            window.map_widget.clear_highlights()
+            if route_coords:
+                info_text = (
+                    f"{parking['name']} — {distance_km:.2f} km — ~{duration_min} min drive"
+                )
+                window.map_widget.draw_route_polyline(
+                    route_coords,
+                    dest['lat'], dest['lon'],
+                    parking['lat'], parking['lon'],
+                    f"{dest['display_name']}<br>Route: {info_text}"
+                )
+            else:
+                # Fallback to previous behavior (straight line with walking estimate)
+                window.map_widget.show_destination_and_parking(
+                    dest['lat'], dest['lon'],
+                    dest['display_name'],
+                    parking['lat'], parking['lon'],
+                    f"{parking['name']} ({parking['available']}/{parking['capacity']} spots)",
+                    parking.get('distance_km', 0.0) or 0.0
+                )
+
+            try:
+                # Add a concise info label at the top
+                if distance_km is not None and duration_min is not None:
+                    info = QLabel(
+                        f"Selected: {parking['name']} — {distance_km:.2f} km (~{duration_min} min drive) from {dest['display_name']}"
+                    )
+                else:
+                    wmin = max(1, int(round((parking.get('distance_km', 0) or 0) / 5.0 * 60)))
+                    info = QLabel(
+                        f"Selected: {parking['name']} — {parking.get('distance_km', 0.0):.2f} km (~{wmin} min walk) from {dest['display_name']}"
+                    )
                 info.setStyleSheet("font-size: 13px; color: #334155; padding: 6px 4px;")
                 self.content_layout.insertWidget(0, info)
             except Exception:
@@ -446,9 +488,11 @@ class MapWidget(QWebEngineView):
         self._dest_marker_id = None
         self._top3_marker_ids = []
 
-        # Setup static file serving
+        # Setup static file serving (support both code/static and repo-level /static)
         current_dir = Path(__file__).parent
-        self.static_dir = current_dir / 'static'
+        candidate = current_dir / 'static'
+        alt = current_dir.parent / 'static'
+        self.static_dir = candidate if candidate.exists() else (alt if alt.exists() else candidate)
         
         # Create HTML with Leaflet map
         self.load_map()
@@ -686,9 +730,7 @@ class MapWidget(QWebEngineView):
             print("JS call failed:", e)
 
     def show_route(self, start_lat, start_lon, dest_lat, dest_lon, info_text="Route"):
-        """Draw a simple polyline route from start to dest and show markers/popups with info_text.
-        This is an approximate visual route (straight line). For real routing, integrate a routing API.
-        """
+        """Draw a simple straight line route (fallback)."""
         js_info = json.dumps(info_text)
         js = f"""
         try {{
@@ -700,6 +742,33 @@ class MapWidget(QWebEngineView):
             map.fitBounds(bounds);
             window._destMarker = d; window._selectedParking = s; window._distanceLine = line;
         }} catch(e) {{ console.error(e); }}
+        """
+        try:
+            self.page().runJavaScript(js)
+        except Exception as e:
+            print("JS call failed:", e)
+
+    def draw_route_polyline(self, coords_latlon, start_lat, start_lon, dest_lat, dest_lon, info_text):
+        """Draw a road route polyline on the map using a list of [lat, lon] coordinates.
+        Also shows start/destination markers and fits map to the route bounds.
+        """
+        # Build JS array string from coords
+        try:
+            path_js = json.dumps(coords_latlon)
+        except Exception:
+            path_js = "[]"
+        js_info = json.dumps(info_text or "Route")
+        js = f"""
+        try {{
+            clearHighlights();
+            var s = L.marker([{start_lat}, {start_lon}]).addTo(map).bindPopup('Start');
+            var d = L.marker([{dest_lat}, {dest_lon}]).addTo(map).bindPopup({js_info}).openPopup();
+            var routeCoords = {path_js};
+            var line = L.polyline(routeCoords, {{color: '#10b981', weight: 4, opacity: 0.9}}).addTo(map);
+            var bounds = L.latLngBounds(routeCoords).pad(0.2);
+            map.fitBounds(bounds);
+            window._destMarker = d; window._selectedParking = s; window._distanceLine = line;
+        }} catch(e) {{ console.error('draw_route_polyline failed:', e); }}
         """
         try:
             self.page().runJavaScript(js)

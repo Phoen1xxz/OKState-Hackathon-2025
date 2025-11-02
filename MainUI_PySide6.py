@@ -55,7 +55,7 @@ class PullUpWidget(QWidget):
         # Right-side action buttons
         self.back_btn = QPushButton("Back", self.handle)
         self.back_btn.setFixedHeight(22)
-        self.back_btn.setStyleSheet("QPushButton{background-color:#f1f5f9; border:1px solid #cbd5e1; border-radius:4px; padding:2px 8px;} QPushButton:hover{background-color:#e2e8f0;}")
+        self.back_btn.setStyleSheet("QPushButton{background-color:#ede9fe; color:#5b21b6; border:1px solid #c4b5fd; border-radius:4px; padding:2px 8px;} QPushButton:hover{background-color:#ddd6fe;}")
         self.back_btn.clicked.connect(self.on_back_clicked)
         self.handle_layout.addWidget(self.back_btn)
         self.clear_history_btn = QPushButton("Clear", self.handle)
@@ -72,12 +72,15 @@ class PullUpWidget(QWidget):
         # Content area with scroll
         self.content = QScrollArea(self)
         self.content.setWidgetResizable(True)
+        self.content.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.content.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.content.setStyleSheet("QScrollArea { background-color: #ffffff; border: none; }")
         self.content.setFixedHeight(90)
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet("background-color: #ffffff;")
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(8, 8, 8, 8)
+        self.content_layout.setSpacing(6)
         self.content.setWidget(self.content_widget)
         main_layout.addWidget(self.content)
         
@@ -92,7 +95,7 @@ class PullUpWidget(QWidget):
         self.animation.finished.connect(self.animationFinished)
         self.content.setMaximumHeight(90)
 
-    def set_results(self, destination_name, top3_list, recommendation):
+    def set_results(self, destination_name, top3_list, recommendation, nearest_alt=None):
         """Populate the pull-up content with search results. Make parking spots clickable
         to show them on the map with distance line to destination.
 
@@ -232,6 +235,16 @@ class PullUpWidget(QWidget):
             rec_btn.parking_data = recommendation
             rec_btn.clicked.connect(lambda checked, r=recommendation: self.on_parking_clicked(r))
             self.content_layout.addWidget(rec_btn)
+        # If there is an alternative nearest requiring a pass, show it under recommendation
+        if nearest_alt:
+            alt_name = nearest_alt.get('name')
+            alt_dist = nearest_alt.get('distance_km', 0.0)
+            alt_passes = nearest_alt.get('passes', [])
+            need = ", ".join(alt_passes) if alt_passes else "specific permit"
+            alt_min = max(1, int(round((alt_dist or 0)/5.0*60)))
+            alt = QLabel(f"Nearest overall: {alt_name} — {alt_dist:.2f} km (~{alt_min} min walk) — requires {need}")
+            alt.setStyleSheet("font-size: 12px; color: #7f1d1d; padding: 6px 4px;")
+            self.content_layout.addWidget(alt)
         # Toggle handle buttons visibility based on context
         try:
             has_results = bool(top3_list)
@@ -304,12 +317,12 @@ class PullUpWidget(QWidget):
             if not dest:
                 return
             # recompute top3 and show markers
-            top3, recommendation = win.compute_nearest_parking(dest['lat'], dest['lon'])
+            top3, recommendation, nearest_alt = win.compute_nearest_parking(dest['lat'], dest['lon'])
             js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
             win.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
             if js_top3:
                 win.map_widget.show_top3_markers(js_top3)
-            self.set_results(dest['display_name'], top3, recommendation)
+            self.set_results(dest['display_name'], top3, recommendation, nearest_alt)
             self.expand()
         except Exception:
             pass
@@ -622,12 +635,12 @@ class MapWidget(QWebEngineView):
             html += "var parkingData = " + json.dumps(self.parking_places) + ";\n"
             html += "function colorForAvailable(avail) { if (avail > 7) return '#15803d'; if (avail >= 4) return '#f97316'; return '#dc2626'; }\n"
             html += "var parsedParking = parkingData; if (typeof parkingData === 'string') { try { parsedParking = JSON.parse(parkingData); } catch(e) { parsedParking = []; } }\n"
-            html += "parsedParking.forEach(function(p) { var circle = L.circleMarker([p.lat, p.lon], { radius: 10, color: colorForAvailable(p.available), fillColor: colorForAvailable(p.available), fillOpacity: 0.9 }).addTo(map); var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + '<br>Available: ' + p.available; circle.bindPopup(popupHtml); var label = L.tooltip({permanent: false, direction: 'top', offset: [0, -12]}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')'); circle.bindTooltip(label); });\n"
+            html += "parsedParking.forEach(function(p) { var circle = L.circleMarker([p.lat, p.lon], { radius: 10, color: colorForAvailable(p.available), fillColor: colorForAvailable(p.available), fillOpacity: 0.9 }).addTo(map); var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + '<br>Available: ' + p.available + (p.ada_spots? '<br>ADA: ' + p.ada_spots : ''); circle.bindPopup(popupHtml); var label = L.tooltip({permanent: false, direction: 'top', offset: [0, -12]}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')'); circle.bindTooltip(label); });\n"
             html += "window._destMarker = null; window._top3Markers = []; window._distanceLine = null; window._selectedParking = null;\n"
             html += "function clearHighlights() { try { if (window._destMarker) { map.removeLayer(window._destMarker); window._destMarker = null; } if (window._top3Markers) { window._top3Markers.forEach(function(m){ map.removeLayer(m); }); window._top3Markers = []; } if (window._distanceLine) { map.removeLayer(window._distanceLine); window._distanceLine = null; } if (window._selectedParking) { map.removeLayer(window._selectedParking); window._selectedParking = null; } } catch(e) { console.error(e); } }\n"
             html += "function addDestination(lat, lon, label) { clearHighlights(); window._destMarker = L.marker([lat, lon]).addTo(map); window._destMarker.bindPopup(label).openPopup(); map.setView([lat, lon], 16); }\n"
-            html += "function showTop3(list) { try { clearHighlights(); window._top3Markers = []; list.forEach(function(p, i){ var m = L.circleMarker([p.lat, p.lon], { radius: 12, color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.95 }).addTo(map); m.bindTooltip((i+1) + '. ' + p.name + ' — Avail: ' + p.available); window._top3Markers.push(m); }); } catch(e) { console.error(e); } }\n"
-            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {riseOnHover: true}).addTo(map); const userLocation = getUserLocation(); if (userLocation) { const eta = updateETAInfo(destLat, destLon); if (eta) { destLabel += '<br><br>From your location:<br>🚶‍♂️ Walking: ' + eta.walking + '<br>🚲 Biking: ' + eta.biking + '<br>🚗 Driving: ' + eta.driving + '<br>📍 Distance: ' + eta.distance + ' km'; } } window._destMarker.bindPopup(destLabel + '<br><br>Distance to parking: ' + distanceKm.toFixed(2) + ' km').openPopup(); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
+            html += "function showTop3(list) { try { if (window._top3Markers && window._top3Markers.length){ window._top3Markers.forEach(function(m){ try{ map.removeLayer(m);}catch(e){} }); } window._top3Markers = []; list.forEach(function(p, i){ var m = L.circleMarker([p.lat, p.lon], { radius: 12, color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.95 }).addTo(map); m.bindTooltip((i+1) + '. ' + p.name + ' — Avail: ' + p.available); window._top3Markers.push(m); }); } catch(e) { console.error(e); } }\n"
+            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {riseOnHover: true}).addTo(map); const userLocation = getUserLocation(); if (userLocation) { const eta = updateETAInfo(destLat, destLon); if (eta) { destLabel += '<br><br>From your location:<br>🚶‍♂️ Walking: ' + eta.walking + '<br>🚲 Biking: ' + eta.biking + '<br>🚗 Driving: ' + eta.driving + '<br>📍 Distance: ' + eta.distance + ' km'; } } var walkMin = Math.max(1, Math.round((distanceKm/5)*60)); window._destMarker.bindPopup(destLabel + '<br><br>Distance to parking: ' + distanceKm.toFixed(2) + ' km' + ' — ~' + walkMin + ' min walk').openPopup(); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
             html += "</script>\n</body>\n</html>\n"
         else:
             print("No cached tiles found. Using online tiles. Run: python map_tile_downloader.py")
@@ -973,64 +986,6 @@ class MainWindow(QMainWindow):
             p['ada_spots'] = max(0, int(round(cap * 0.15)))
             p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
 
-        # Try to augment with nearby OSM parkings using Overpass (no API key required). This is best-effort.
-        try:
-            def fetch_nearby_overpass(lat, lon, radius_m=1500, limit=12):
-                query = f"[out:json][timeout:10];(node[amenity=parking](around:{radius_m},{lat},{lon});way[amenity=parking](around:{radius_m},{lat},{lon});relation[amenity=parking](around:{radius_m},{lat},{lon}););out center {limit};"
-                url = "https://overpass-api.de/api/interpreter"
-                r = requests.post(url, data={'data': query}, timeout=8)
-                results = []
-                if r.status_code == 200:
-                    data = r.json()
-                    for el in data.get('elements', []):
-                        # Determine coordinates
-                        if el.get('type') == 'node':
-                            lat2 = el.get('lat')
-                            lon2 = el.get('lon')
-                        else:
-                            center = el.get('center', {})
-                            lat2 = center.get('lat')
-                            lon2 = center.get('lon')
-                        if lat2 is None or lon2 is None:
-                            continue
-                        name = el.get('tags', {}).get('name', 'OSM Parking')
-                        capacity = None
-                        try:
-                            capacity = int(el.get('tags', {}).get('capacity', 0))
-                        except Exception:
-                            capacity = 60
-                        if not capacity or capacity <= 0:
-                            capacity = 60
-                        available = max(5, int(capacity * 0.2))
-                        results.append({
-                            'name': name,
-                            'lat': lat2,
-                            'lon': lon2,
-                            'capacity': capacity,
-                            'available': available
-                        })
-                        if len(results) >= limit:
-                            break
-                return results
-
-            # use campus center as seed to find additional parkings
-            seed_lat = sum([p['lat'] for p in self.parking_places]) / len(self.parking_places)
-            seed_lon = sum([p['lon'] for p in self.parking_places]) / len(self.parking_places)
-            extras = fetch_nearby_overpass(seed_lat, seed_lon, radius_m=1200, limit=6)
-            # append extras if not duplicate by coordinate
-            for ex in extras:
-                dup = any(abs(ex['lat'] - p['lat']) < 1e-5 and abs(ex['lon'] - p['lon']) < 1e-5 for p in self.parking_places)
-                if not dup:
-                    cap = int(ex.get('capacity', 0) or 0)
-                    ex['ada_spots'] = max(0, int(round(cap * 0.15)))
-                    ex['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
-                    possible_passes = ["staff", "green_commuter", "silver_commuter", "residence_hall"]
-                    num_passes = random.randint(1, 3)
-                    ex['passes'] = random.sample(possible_passes, num_passes) + (["ada"] if ex['ada_spots'] > 0 else [])
-                    self.parking_places.append(ex)
-        except Exception as e:
-            print('Overpass fetch skipped/failed:', e)
-
         # Map widget (takes remaining space) - pass parking data so markers are shown
         self.map_widget = MapWidget(parking_places=self.parking_places)
         layout.addWidget(self.map_widget)
@@ -1073,13 +1028,13 @@ class MainWindow(QMainWindow):
         dest = self._last_destination
         try:
             if self.filters[0] or self.filters[1]:
-                top3, recommendation = self.compute_nearest_parking(dest['lat'], dest['lon'])
+                top3, recommendation, nearest_alt = self.compute_nearest_parking(dest['lat'], dest['lon'])
                 # show top3 markers and populate pull-up
                 js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
                 self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
                 if js_top3:
                     self.map_widget.show_top3_markers(js_top3)
-                self.pull_up.set_results(dest['display_name'], top3, recommendation)
+                self.pull_up.set_results(dest['display_name'], top3, recommendation, nearest_alt)
                 self.pull_up.expand()
             elif self.filters[2]:
                 # Show approximate shortest bike route from campus center to destination and estimate time
@@ -1118,7 +1073,7 @@ class MainWindow(QMainWindow):
 
     def compute_nearest_parking(self, dest_lat, dest_lon):
         """Compute enriched parking list sorted by distance and a recommendation.
-        Returns (top3_list, recommendation)
+        Returns (top3_list, recommendation, nearest_alt)
         Each entry in lists is a dict with keys: name, lat, lon, capacity, available, distance_km, passes
         """
         enriched = []
@@ -1156,10 +1111,18 @@ class MainWindow(QMainWindow):
                     if oranges:
                         recommendation = min(oranges, key=lambda x: x['distance_km'])
 
-            return top3, recommendation
+            # Determine alternative nearest overall if user selected passes exclude it
+            nearest_alt = None
+            active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
+            if enriched:
+                overall = enriched[0]
+                spot_passes = set(overall.get('passes', []))
+                if active_passes and not (spot_passes & active_passes):
+                    nearest_alt = overall
+            return top3, recommendation, nearest_alt
         except Exception as e:
             print('compute_nearest_parking failed:', e)
-            return [], None
+            return [], None, None
 
     def update_suggestions(self, text):
         t = (text or '').strip()
@@ -1286,14 +1249,13 @@ class MainWindow(QMainWindow):
 
         # Compute distances to parking places with pass filtering
         enriched = []
+        # Active permits selected by user
+        active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
         for p in self.parking_places:
             # Check if the parking spot is accessible with selected passes
             spot_passes = set(p.get('passes', []))
             if p.get('ada_spots', 0) > 0:
                 spot_passes.add('ada')
-            
-            # Get active passes (ones that are selected)
-            active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
             
             # If no passes are selected, show all spots
             # If passes are selected, only show spots that match at least one selected pass
@@ -1330,16 +1292,38 @@ class MainWindow(QMainWindow):
                 if oranges:
                     recommendation = min(oranges, key=lambda x: x['distance_km'])
 
+        # Determine nearest overall (ignoring permit filter) to suggest if it requires a different pass
+        nearest_alt = None
+        try:
+            all_enriched = []
+            for p in self.parking_places:
+                sp = set(p.get('passes', []))
+                if p.get('ada_spots', 0) > 0:
+                    sp.add('ada')
+                d_all = self._haversine_km(dest_lat, dest_lon, p["lat"], p["lon"])
+                all_enriched.append({
+                    "name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": d_all, "passes": list(sp)
+                })
+            all_enriched.sort(key=lambda x: x['distance_km'])
+            if all_enriched:
+                overall = all_enriched[0]
+                overall_passes = set(overall.get('passes', []))
+                if active_passes and not (overall_passes & active_passes):
+                    nearest_alt = overall
+        except Exception:
+            nearest_alt = None
+
         # Update map markers and pull-up panel
         label = f"{display_name}".replace('"', '')
         # Add destination marker and show top-3 highlights
         self.map_widget.add_destination_marker(dest_lat, dest_lon, label)
         # Build minimal list of dicts for JS top3
         js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
-        self.map_widget.show_top3_markers(js_top3)
+        if js_top3:
+            self.map_widget.show_top3_markers(js_top3)
 
         # Push results to pull-up and expand
-        self.pull_up.set_results(display_name, top3, recommendation)
+        self.pull_up.set_results(display_name, top3, recommendation, nearest_alt)
         self.pull_up.expand()
 
     def set_current_user(self, username):

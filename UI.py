@@ -176,7 +176,7 @@ class CarParkingApp:
             try:
                 # Provide username to the PySide app via environment variable
                 try:
-                    os.environ['PARKING_CURRENT_USER'] = username
+                    os.environ['PARKING_CURRENT_USER'] = tokens
                 except Exception:
                     pass
                 # Import and run the PySide6 main application from MainUI_PySide6.py

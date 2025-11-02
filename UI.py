@@ -1,35 +1,103 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 import json
 import os
+# Use top-level imports so the script can be run directly (python UI.py)
+try:
+    # Prefer direct imports when running as a standalone script
+    from create_user import create_user, Auth0Error
+    from auth_password import perform_password_grant
+except Exception:
+    # Fallback to relative imports when executed as a package
+    from .create_user import create_user, Auth0Error
+    from .auth_password import perform_password_grant
+
+
+def _format_auth0_error(info) -> str:
+    """Convert various Auth0 error shapes into a readable string."""
+    if info is None:
+        return ""
+    if isinstance(info, str):
+        return info
+    if isinstance(info, (int, float)):
+        return str(info)
+    if isinstance(info, list):
+        parts = [_format_auth0_error(i) for i in info]
+        return "; ".join(p for p in parts if p)
+    if isinstance(info, dict):
+        # Prefer common message keys
+        for key in ("description", "error_description", "message", "error", "msg"):
+            v = info.get(key)
+            if v:
+                return _format_auth0_error(v)
+        # Otherwise flatten dict into key: value pieces
+        parts = []
+        for k, v in info.items():
+            parts.append(f"{k}: {_format_auth0_error(v)}")
+        return "; ".join(parts)
+    # Fallback
+    try:
+        return str(info)
+    except Exception:
+        return repr(info)
+
+
+def _error_has_keywords(info, keywords):
+    s = _format_auth0_error(info).lower()
+    return any(kw in s for kw in keywords)
 
 class CarParkingApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Car-Parking System")
-        self.root.geometry("500x600")
+        self.root.geometry("800x700")
         self.root.resizable(False, False)
         self.root.configure(bg='#0f172a')
-        
-        # File to store user credentials
+        try:
+            self.root.update_idletasks()
+            w = 800
+            h = 700
+            x = (self.root.winfo_screenwidth() // 2) - (w // 2)
+            y = (self.root.winfo_screenheight() // 2) - (h // 2)
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+        # Local users file (store credentials + selected passes)
         self.users_file = "users.json"
         self.load_users()
-        
+
         # Show login page
         self.show_login_page()
-        
+
     def load_users(self):
-        """Loading users from JSON file"""
+        """Load users from local JSON file. Stored format:
+        { username: {"password": ..., "form": ...}, ... }
+        """
         if os.path.exists(self.users_file):
-            with open(self.users_file, 'r') as f:
-                self.users = json.load(f)
+            try:
+                with open(self.users_file, 'r') as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
         else:
-            self.users = {}
-    
+            data = {}
+        # Normalize data structure to just store password
+        normalized = {}
+        for k, v in data.items():
+            if isinstance(v, dict):
+                normalized[k] = {"password": v.get('password', '')}
+            else:
+                normalized[k] = {"password": v}
+        self.users = normalized
+
     def save_users(self):
-        """Save users to JSON file"""
-        with open(self.users_file, 'w') as f:
-            json.dump(self.users, f, indent=4)
+        """Save current self.users dict to users_file"""
+        try:
+            with open(self.users_file, 'w') as f:
+                json.dump(self.users, f, indent=2)
+        except Exception as e:
+            # Non-fatal; show a message in console
+            print(f"Failed to save users to {self.users_file}: {e}")
     
     def clear_window(self):
         """Clear all widgets from the window"""
@@ -69,9 +137,32 @@ class CarParkingApp:
         
         self.password_entry = tk.Entry(inner_frame, font=("Arial", 14), bg='#334155', fg='#f1f5f9', width=25, show="●", relief=tk.FLAT, borderwidth=2, insertbackground='white')
         self.password_entry.grid(row=1, column=1, pady=15, padx=10, ipady=10)
+        try:
+            toggle_pwd = tk.Button(
+                inner_frame,
+                text="Show",
+                font=("Arial", 11, "bold"),
+                bg="#e5e7eb",
+                fg="black",
+                activebackground="#d1d5db",
+                activeforeground="black",
+                width=6,
+                relief=tk.FLAT,
+                command=lambda: [
+                    self.password_entry.config(show='' if self.password_entry.cget('show') else '●'),
+                    toggle_pwd.config(text='Hide' if toggle_pwd.cget('text')=='Show' else 'Show')
+                ]
+            )
+            toggle_pwd.grid(row=1, column=2, padx=(0,10))
+        except Exception:
+            pass
         
         # Set focus on username entry
         self.username_entry.focus_set()
+        try:
+            self.root.after(50, lambda: self.username_entry.focus_set())
+        except Exception:
+            pass
         
         # Buttons Frame
         buttons_frame = tk.Frame(self.root, bg='#1e293b')
@@ -97,8 +188,45 @@ class CarParkingApp:
             messagebox.showerror("Error", "Please enter both username and password!")
             return
         
-        if username in self.users and self.users[username] == password:
-            self.show_main_page(username)
+        tokens = perform_password_grant(username, password)
+        if tokens:
+            # Close the tkinter login window and launch the PySide6 main UI
+            try:
+                # persist current user info locally (if present in users store)
+                if username in self.users:
+                    self.users[username]['last_login'] = True
+                    self.save_users()
+            except Exception:
+                pass
+
+            try:
+                # Destroy the Tkinter root to end the Tk event loop cleanly
+                self.root.destroy()
+            except Exception:
+                pass
+
+            try:
+                # Provide username to the PySide app via environment variable
+                try:
+                    os.environ['PARKING_CURRENT_USER'] = username
+                except Exception:
+                    pass
+                # Import and run the PySide6 main application from MainUI_PySide6.py
+                # This calls MainUI_PySide6.main(), which creates its own QApplication and execs.
+                import MainUI_PySide6
+                # If the module has a main() function, call it.
+                if hasattr(MainUI_PySide6, 'main'):
+                    MainUI_PySide6.main()
+                else:
+                    # Fallback: execute as a script via subprocess
+                    import subprocess, sys
+                    subprocess.run([sys.executable, os.path.join(os.getcwd(), 'MainUI_PySide6.py')])
+            except Exception as e:
+                # If launching the main UI failed, show a messagebox (but app may have exited)
+                try:
+                    messagebox.showerror("Error", f"Failed to launch main UI: {e}")
+                except Exception:
+                    print("Failed to launch main UI:", e)
         else:
             messagebox.showerror("Error", "Invalid username or password!")
     
@@ -108,7 +236,7 @@ class CarParkingApp:
         self.root.configure(bg='#1e1b4b')  # Deep indigo background
         
         # Title
-        title_label = tk.Label(self.root, text="✨ New User Registration", font=("Arial", 26, "bold"), bg='#1e1b4b', fg='#a78bfa')
+        title_label = tk.Label(self.root, text="New User Registration", font=("Arial", 26, "bold"), bg='#1e1b4b', fg='#a78bfa')
         title_label.pack(pady=35)
         
         subtitle_label = tk.Label(self.root, text="Create Your Account", font=("Arial", 14), bg='#1e1b4b', fg='#c4b5fd')
@@ -116,7 +244,7 @@ class CarParkingApp:
         
         # Registration Frame
         reg_frame = tk.Frame(self.root, bg='#312e81', relief=tk.RAISED, borderwidth=2)
-        reg_frame.pack(pady=25, padx=50, fill=tk.BOTH)
+        reg_frame.pack(pady=25, padx=25, fill=tk.BOTH)
         
         # Add padding inside frame
         inner_frame = tk.Frame(reg_frame, bg='#312e81')
@@ -135,6 +263,25 @@ class CarParkingApp:
         
         self.new_password_entry = tk.Entry(inner_frame, font=("Arial", 14), bg='#4c1d95', fg='#faf5ff', width=25, show="●", relief=tk.FLAT, borderwidth=2, insertbackground='white')
         self.new_password_entry.grid(row=1, column=1, pady=12, padx=10, ipady=10)
+        try:
+            toggle_new_pwd = tk.Button(
+                inner_frame,
+                text="Show",
+                font=("Arial", 11, "bold"),
+                bg="#e5e7eb",
+                fg="black",
+                activebackground="#d1d5db",
+                activeforeground="black",
+                width=6,
+                relief=tk.FLAT,
+                command=lambda: [
+                    self.new_password_entry.config(show='' if self.new_password_entry.cget('show') else '●'),
+                    toggle_new_pwd.config(text='Hide' if toggle_new_pwd.cget('text')=='Show' else 'Show')
+                ]
+            )
+            toggle_new_pwd.grid(row=1, column=2, padx=(0,10))
+        except Exception:
+            pass
         
         # Confirm Password
         confirm_label = tk.Label(inner_frame, text="Confirm Password:", font=("Arial", 14, "bold"), bg='#312e81', fg='#e0e7ff')
@@ -142,8 +289,30 @@ class CarParkingApp:
         
         self.confirm_password_entry = tk.Entry(inner_frame, font=("Arial", 14), bg='#4c1d95', fg='#faf5ff', width=25, show="●", relief=tk.FLAT, borderwidth=2, insertbackground='white')
         self.confirm_password_entry.grid(row=2, column=1, pady=12, padx=10, ipady=10)
-
-        self.new_username_entry.focus_set()  # Set focus on username entry
+        try:
+            toggle_cnf_pwd = tk.Button(
+                inner_frame,
+                text="Show",
+                font=("Arial", 11, "bold"),
+                bg="#e5e7eb",
+                fg="black",
+                activebackground="#d1d5db",
+                activeforeground="black",
+                width=6,
+                relief=tk.FLAT,
+                command=lambda: [
+                    self.confirm_password_entry.config(show='' if self.confirm_password_entry.cget('show') else '●'),
+                    toggle_cnf_pwd.config(text='Hide' if toggle_cnf_pwd.cget('text')=='Show' else 'Show')
+                ]
+            )
+            toggle_cnf_pwd.grid(row=2, column=2, padx=(0,10))
+        except Exception:
+            pass
+        self.new_username_entry.focus_set()
+        try:
+            self.root.after(50, lambda: self.new_username_entry.focus_set())
+        except Exception:
+            pass
         
         # Buttons Frame
         buttons_frame = tk.Frame(self.root, bg='#1e1b4b')
@@ -162,49 +331,53 @@ class CarParkingApp:
         username = self.new_username_entry.get().strip()
         password = self.new_password_entry.get().strip()
         confirm = self.confirm_password_entry.get().strip()
+
         
         if not username or not password or not confirm:
             messagebox.showerror("Error", "Please fill in all fields!")
-            return
-        
-        if username in self.users:
-            messagebox.showerror("Error", "Username already exists!")
             return
         
         if password != confirm:
             messagebox.showerror("Error", "Passwords do not match!")
             return
         
-        if len(password) < 4:
-            messagebox.showerror("Error", "Password must be at least 4 characters!")
+        try:
+            create_user(username, password, os.getenv("AUTH0_REALM", "Username-Password-Authentication"))
+        except Auth0Error as e:
+            info = e.info if hasattr(e, 'info') else {}
+            # Format error into readable text
+            formatted = _format_auth0_error(info)
+            # Detect common cases
+            if _error_has_keywords(formatted, ["invalid"]):
+                user_msg = "Username already exists!"
+            elif _error_has_keywords(formatted, ["length"]):
+                user_msg = "Weak password: must have: 8 characters, a number, a capital letter, and a symbol."
+            elif _error_has_keywords(formatted, ["email"]):
+                user_msg = "Username must be an email!"
+            else:
+                # Generic fallback shows the formatted message
+                user_msg = formatted or "Failed to create user"
+
+            try:
+                self.users[username] = {"password": password}
+                self.save_users()
+            except Exception as e:
+                print("Warning: failed to save local user info:", e)
+
+            messagebox.showerror("Error", f"Failed to create user: {user_msg}")
             return
-        
-        # Save new user
-        self.users[username] = password
-        self.save_users()
-        
+
+        # Persist locally as well
+        try:
+            self.users[username] = {"password": password}
+            self.save_users()
+        except Exception as e:
+            print("Warning: failed to save local user info:", e)
+
         messagebox.showinfo("Success", "Registration successful! You can now login.")
         self.show_login_page()
     
-    def show_main_page(self, username):
-        """Display the main parking system page after login"""
-        self.clear_window()
-        self.root.configure(bg='#0c4a6e')  # Deep ocean blue background
-        
-        # Title
-        title_label = tk.Label(self.root, text="Car Parking Management", font=("Arial", 26, "bold"), bg='#0c4a6e', fg='#7dd3fc')
-        title_label.pack(pady=50)
-        
-        # Options frame
-        options_frame = tk.Frame(self.root, bg='#0c4a6e')
-        options_frame.pack(pady=40)
-        
-        
-        # Logout button
-        logout_btn = tk.Button(self.root, text="Logout", font=("Arial", 13, "bold"), bg='#ef4444', fg='black', width=18, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#dc2626', activeforeground='#ffffff', command=self.show_login_page)
-        logout_btn.pack(pady=30)
-
-    
+    # show_main_page removed: the login() method now launches the PySide6 main UI directly.
     def run(self):
         """Start the application"""
         self.root.mainloop()

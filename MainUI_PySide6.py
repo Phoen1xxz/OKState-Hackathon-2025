@@ -723,10 +723,11 @@ class MapWidget(QWebEngineView):
             html += "var parsedParking = parkingData; if (typeof parkingData === 'string') { try { parsedParking = JSON.parse(parkingData); } catch(e) { parsedParking = []; } }\n"
             html += "parsedParking.forEach(function(p) { var circle = L.circleMarker([p.lat, p.lon], { radius: 10, color: colorForAvailable(p.available), fillColor: colorForAvailable(p.available), fillOpacity: 0.9 }).addTo(map); var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + '<br>Available: ' + p.available + (p.ada_spots? '<br>ADA: ' + p.ada_spots : ''); circle.bindPopup(popupHtml); var label = L.tooltip({permanent: false, direction: 'top', offset: [0, -12]}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')'); circle.bindTooltip(label); });\n"
             html += "window._destMarker = null; window._top3Markers = []; window._distanceLine = null; window._selectedParking = null;\n"
+            html += "var destIcon = L.divIcon({className:'dest-icon', html:'<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z\" fill=\"#f97316\"/><circle cx=\"12\" cy=\"9\" r=\"3\" fill=\"white\"/></svg>', iconSize:[24,24], iconAnchor:[12,24], popupAnchor:[0,-20]});\n"
             html += "function clearHighlights() { try { if (window._destMarker) { map.removeLayer(window._destMarker); window._destMarker = null; } if (window._top3Markers) { window._top3Markers.forEach(function(m){ map.removeLayer(m); }); window._top3Markers = []; } if (window._distanceLine) { map.removeLayer(window._distanceLine); window._distanceLine = null; } if (window._selectedParking) { map.removeLayer(window._selectedParking); window._selectedParking = null; } } catch(e) { console.error(e); } }\n"
-            html += "function addDestination(lat, lon, label) { clearHighlights(); window._destMarker = L.marker([lat, lon]).addTo(map); window._destMarker.bindPopup(label).openPopup(); map.setView([lat, lon], 16); }\n"
+            html += "function addDestination(lat, lon, label) { clearHighlights(); window._destMarker = L.marker([lat, lon], {icon: destIcon}).addTo(map); window._destMarker.bindPopup(label).openPopup(); map.setView([lat, lon], 16); }\n"
             html += "function showTop3(list) { try { if (window._top3Markers && window._top3Markers.length){ window._top3Markers.forEach(function(m){ try{ map.removeLayer(m);}catch(e){} }); } window._top3Markers = []; list.forEach(function(p, i){ var m = L.circleMarker([p.lat, p.lon], { radius: 12, color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.95 }).addTo(map); m.bindTooltip((i+1) + '. ' + p.name + ' — Avail: ' + p.available); window._top3Markers.push(m); }); } catch(e) { console.error(e); } }\n"
-            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {riseOnHover: true}).addTo(map); const userLocation = getUserLocation(); if (userLocation) { const eta = updateETAInfo(destLat, destLon); if (eta) { destLabel += '<br><br>From your location:<br>🚶‍♂️ Walking: ' + eta.walking + '<br>🚲 Biking: ' + eta.biking + '<br>🚗 Driving: ' + eta.driving + '<br>📍 Distance: ' + eta.distance + ' km'; } } var walkMin = Math.max(1, Math.round((distanceKm/5)*60)); window._destMarker.bindPopup(destLabel + '<br><br>Distance to parking: ' + distanceKm.toFixed(2) + ' km' + ' — ~' + walkMin + ' min walk').openPopup(); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
+            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {icon: destIcon, riseOnHover: true}).addTo(map); const userLocation = getUserLocation(); if (userLocation) { const eta = updateETAInfo(destLat, destLon); if (eta) { destLabel += '<br><br>From your location:<br>🚶‍♂️ Walking: ' + eta.walking + '<br>🚲 Biking: ' + eta.biking + '<br>🚗 Driving: ' + eta.driving + '<br>📍 Distance: ' + eta.distance + ' km'; } } var walkMin = Math.max(1, Math.round((distanceKm/5)*60)); window._destMarker.bindPopup(destLabel + '<br><br>Distance to parking: ' + distanceKm.toFixed(2) + ' km' + ' — ~' + walkMin + ' min walk').openPopup(); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
             html += "</script>\n</body>\n</html>\n"
         else:
             print("No cached tiles found. Using online tiles. Run: python map_tile_downloader.py")
@@ -797,8 +798,9 @@ class MapWidget(QWebEngineView):
         js = f"""
         try {{
             clearHighlights();
+            var destIcon = window.destIcon || L.divIcon({{className:'dest-icon', html:'<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z\" fill=\"#f97316\"/><circle cx=\"12\" cy=\"9\" r=\"3\" fill=\"white\"/></svg>', iconSize:[24,24], iconAnchor:[12,24], popupAnchor:[0,-20]}});
             var s = L.marker([{start_lat}, {start_lon}]).addTo(map).bindPopup('Start').openPopup();
-            var d = L.marker([{dest_lat}, {dest_lon}]).addTo(map).bindPopup({js_info}).openPopup();
+            var d = L.marker([{dest_lat}, {dest_lon}], {{icon: destIcon}}).addTo(map).bindPopup({js_info}).openPopup();
             var line = L.polyline([[{start_lat}, {start_lon}], [{dest_lat}, {dest_lon}]], {{color: '#10b981', weight:4, opacity:0.9}}).addTo(map);
             var bounds = L.latLngBounds([[{start_lat}, {start_lon}], [{dest_lat}, {dest_lon}]]).pad(0.3);
             map.fitBounds(bounds);
@@ -823,8 +825,9 @@ class MapWidget(QWebEngineView):
         js = f"""
         try {{
             clearHighlights();
+            var destIcon = window.destIcon || L.divIcon({{className:'dest-icon', html:'<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z\" fill=\"#f97316\"/><circle cx=\"12\" cy=\"9\" r=\"3\" fill=\"white\"/></svg>', iconSize:[24,24], iconAnchor:[12,24], popupAnchor:[0,-20]}});
             var s = L.marker([{start_lat}, {start_lon}]).addTo(map).bindPopup('Start');
-            var d = L.marker([{dest_lat}, {dest_lon}]).addTo(map).bindPopup({js_info}).openPopup();
+            var d = L.marker([{dest_lat}, {dest_lon}], {{icon: destIcon}}).addTo(map).bindPopup({js_info}).openPopup();
             var routeCoords = {path_js};
             var line = L.polyline(routeCoords, {{color: '#10b981', weight: 4, opacity: 0.9}}).addTo(map);
             var bounds = L.latLngBounds(routeCoords).pad(0.2);
@@ -931,6 +934,17 @@ class MainWindow(QMainWindow):
         self.filter_menu.addAction(act_nearest)
         self.filter_menu.addAction(act_full)
         self.filter_menu.addAction(act_permits)
+        try:
+            act_cars.setToolTip("Show car parking options")
+            act_motor.setToolTip("Show motorcycle parking options")
+            act_bike.setToolTip("Plan a bike route to destination")
+            act_nearest.setToolTip("Highlight top 3 nearest lots")
+            act_full.setToolTip("Show lots that are currently full")
+            act_permits.setToolTip("Ignore permit filtering (show all)")
+            self.filter_btn.setToolTip("Filter options")
+            self.search_input.setToolTip("Search for a destination (e.g., 'Edmon Low Library')")
+        except Exception:
+            pass
 
         # Connect actions to the same handler
         act_cars.triggered.connect(lambda: self.select_filter(0, act_cars))
@@ -949,6 +963,9 @@ class MainWindow(QMainWindow):
         # Show menu when button clicked (positioned below the button)
         self.filter_btn.clicked.connect(lambda: self.filter_menu.exec(self.filter_btn.mapToGlobal(QPoint(0, self.filter_btn.height()))))
         
+        title_label = QLabel("OSU Parking")
+        title_label.setStyleSheet("font-weight:bold; font-size:18px; color:#0f172a; padding-right:10px;")
+        top_layout.addWidget(title_label)
         top_layout.addWidget(self.filter_container)
         # --- Search bar (beside filter) ---
         self.search_input = QLineEdit()

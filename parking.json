@@ -1,0 +1,9 @@
+[
+  { "name": "Colvin Recreation Center", "lat": 36.1253, "lon": -97.0762, "capacity": 250, "available": 40, "passes": ["staff", "green_commuter"], "ada_spots": 38, "motorcycle_spots": 12 },
+  { "name": "University Commons West", "lat": 36.1274, "lon": -97.077, "capacity": 300, "available": 55, "passes": ["residence_hall", "staff"], "ada_spots": 45, "motorcycle_spots": 15 },
+  { "name": "Drummond Hall Lot", "lat": 36.1232, "lon": -97.0735, "capacity": 120, "available": 3, "passes": ["staff", "silver_commuter"], "ada_spots": 18, "motorcycle_spots": 6 },
+  { "name": "Physical Sciences Building Lot", "lat": 36.1242, "lon": -97.0664, "capacity": 180, "available": 18, "passes": ["staff", "green_commuter", "silver_commuter"], "ada_spots": 27, "motorcycle_spots": 9 },
+  { "name": "Boone Pickens Stadium Lot A", "lat": 36.125, "lon": -97.069, "capacity": 220, "available": 5, "passes": ["staff", "silver_commuter"], "ada_spots": 33, "motorcycle_spots": 11 },
+  { "name": "Student Union Garage", "lat": 36.1209, "lon": -97.0678, "capacity": 140, "available": 22, "passes": ["green_commuter", "silver_commuter"], "ada_spots": 21, "motorcycle_spots": 7 },
+  { "name": "Agricultural Hall Lot", "lat": 36.125, "lon": -97.0713, "capacity": 200, "available": 28, "passes": ["staff", "green_commuter"], "ada_spots": 30, "motorcycle_spots": 10 }
+]

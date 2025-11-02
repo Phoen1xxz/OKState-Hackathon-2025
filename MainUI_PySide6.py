@@ -171,7 +171,13 @@ class PullUpWidget(QWidget):
                     formatted_passes = [pass_names.get(p_id, p_id) for p_id in p['passes']]
                     pass_info = f" [Passes: {', '.join(formatted_passes)}]"
                 minutes_walk = max(1, int(round((p.get('distance_km', 0) or 0) / 5.0 * 60)))
-                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {p['available']}/{p['capacity']} spots — {p['distance_km']:.2f} km — ~{minutes_walk} min walk{pass_info}")
+                # Availability text: if Motorcycle filter active, show motorcycle spots explicitly
+                try:
+                    moto_mode = bool(self.parent_widget and getattr(self.parent_widget, 'filters', [False]*6)[1])
+                except Exception:
+                    moto_mode = False
+                avail_text = (f"Motorcycle: {p.get('available', 0)}") if moto_mode else (f"{p.get('available', 0)}/{p.get('capacity', 0)} spots")
+                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {avail_text} — {p['distance_km']:.2f} km — ~{minutes_walk} min walk{pass_info}")
                 btn.setStyleSheet("""
                     QPushButton {
                         background-color: #f8fafc;
@@ -215,7 +221,12 @@ class PullUpWidget(QWidget):
                 formatted_passes = [pass_names.get(p_id, p_id) for p_id in recommendation['passes']]
                 pass_info = f" [Passes: {', '.join(formatted_passes)}]"
             rmin_walk = max(1, int(round((recommendation.get('distance_km', 0) or 0) / 5.0 * 60)))
-            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {recommendation['available']}/{recommendation['capacity']} spots — {recommendation['distance_km']:.2f} km — ~{rmin_walk} min walk{pass_info}")
+            try:
+                moto_mode = bool(self.parent_widget and getattr(self.parent_widget, 'filters', [False]*6)[1])
+            except Exception:
+                moto_mode = False
+            r_avail_text = (f"Motorcycle: {recommendation.get('available', 0)}") if moto_mode else (f"{recommendation.get('available', 0)}/{recommendation.get('capacity', 0)} spots")
+            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {r_avail_text} — {recommendation['distance_km']:.2f} km — ~{rmin_walk} min walk{pass_info}")
             rec_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #ecfdf5;
@@ -245,6 +256,32 @@ class PullUpWidget(QWidget):
             alt = QLabel(f"Nearest overall: {alt_name} — {alt_dist:.2f} km (~{alt_min} min walk) — requires {need}")
             alt.setStyleSheet("font-size: 12px; color: #7f1d1d; padding: 6px 4px;")
             self.content_layout.addWidget(alt)
+
+    def show_bike_directions(self, destination_name, steps_list, summary_text):
+        """Render turn-by-turn bike directions in the pull-up."""
+        # Clear content
+        for i in reversed(range(self.content_layout.count())):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
+        title = QLabel(f"Bike directions to: {destination_name}")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e40af; padding: 8px 4px;")
+        self.content_layout.addWidget(title)
+        if summary_text:
+            summary = QLabel(summary_text)
+            summary.setStyleSheet("font-size: 13px; color: #334155; padding: 4px;")
+            self.content_layout.addWidget(summary)
+        if steps_list:
+            for idx, line in enumerate(steps_list, start=1):
+                lbl = QLabel(f"{idx}. {line}")
+                lbl.setStyleSheet("font-size: 13px; color: #0f172a; padding: 4px 6px; border-left: 3px solid #34d399; margin: 2px 0;")
+                self.content_layout.addWidget(lbl)
+        else:
+            no = QLabel("No step-by-step directions available.")
+            no.setStyleSheet("font-size: 13px; color: #7f1d1d; padding: 4px;")
+            self.content_layout.addWidget(no)
+        self.expand()
         # Toggle handle buttons visibility based on context
         try:
             has_results = bool(top3_list)
@@ -304,13 +341,18 @@ class PullUpWidget(QWidget):
                 )
             else:
                 # Fallback to previous behavior (straight line with walking estimate)
+                try:
+                    moto_mode = bool(self.parent_widget and getattr(self.parent_widget, 'filters', [False]*6)[1])
+                except Exception:
+                    moto_mode = False
+                avail_label = (f"Motorcycle: {parking.get('available', 0)}") if moto_mode else (f"{parking.get('available', 0)}/{parking.get('capacity', 0)} spots")
                 window.map_widget.show_destination_and_parking(
-                    dest['lat'], dest['lon'],
-                    dest['display_name'],
-                    parking['lat'], parking['lon'],
-                    f"{parking['name']} ({parking['available']}/{parking['capacity']} spots)",
-                    parking.get('distance_km', 0.0) or 0.0
-                )
+                        dest['lat'], dest['lon'],
+                        dest['display_name'],
+                        parking['lat'], parking['lon'],
+                        f"{parking['name']} ({avail_label})",
+                        parking.get('distance_km', 0.0) or 0.0
+                    )
 
             try:
                 # Add a concise info label at the top
@@ -692,10 +734,16 @@ class MapWidget(QWebEngineView):
             html += "<!DOCTYPE html>\n<html>\n<head>\n"
             html += "<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />\n"
             html += "<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n"
-            html += "<style>body { margin: 0; padding: 0; } #map { height: 100vh; width: 100vw; }</style>\n"
+            html += "<style>body { margin: 0; padding: 0; } #map { height: 100vh; width: 100vw; } .user-location-marker{display:flex;align-items:center;justify-content:center;} .user-location-dot{background-color:#4285f4;border:2px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 3px rgba(0,0,0,0.3);} .leaflet-control-attribution{font-size:11px;}</style>\n"
             html += "</head>\n<body>\n<div id=\"map\"></div>\n<script>\n"
             html += "var map = L.map('map').setView([" + str(okstate_lat) + ", " + str(okstate_lon) + "], 15);\n"
             html += "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(map);\n"
+            # Geolocation helpers for online tiles mode
+            html += "var userMarker=null, userCircle=null;\n"
+            html += "function updateUserLocationMarker(map, position){ const latlng=[position.coords.latitude, position.coords.longitude]; if(!userMarker){ userMarker=L.marker(latlng,{icon:L.divIcon({className:'user-location-marker',html:'<div class\\\"user-location-dot\\\"></div>'})}).addTo(map); userCircle=L.circle(latlng,{radius:position.coords.accuracy,color:'#4285f4',fillColor:'#4285f433',fillOpacity:0.2}).addTo(map); map.setView(latlng,16);} else { userMarker.setLatLng(latlng); userCircle.setLatLng(latlng); userCircle.setRadius(position.coords.accuracy);} }\n"
+            html += "function initializeLocationTracking(map){ var locationControl=L.control({position:'bottomright'}); locationControl.onAdd=function(map){ const div=L.DomUtil.create('div','leaflet-bar leaflet-control'); div.innerHTML=`<a href=# title=\\\"Center on my location\\\" style=\\\"display:flex;align-items:center;justify-content:center;width:30px;height:30px;background:white;\\\"><svg viewBox=\\\"0 0 24 24\\\" width=\\\"18\\\" height=\\\"18\\\"><path d=\\\"M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z\\\" fill=\\\"#666\\\"/></svg>`; div.onclick=function(){ if(userMarker){ map.setView(userMarker.getLatLng(),17);} else { if('geolocation' in navigator){ navigator.geolocation.getCurrentPosition((p)=>updateUserLocationMarker(map,p),()=>{}, {enableHighAccuracy:true,timeout:5000,maximumAge:0}); } } return false; }; return div; }; locationControl.addTo(map); if('geolocation' in navigator){ navigator.geolocation.watchPosition((p)=>updateUserLocationMarker(map,p),(e)=>console.error('Error getting location:',e),{enableHighAccuracy:true,timeout:5000,maximumAge:0}); } }\n"
+            html += "function getUserLocation(){ return userMarker ? userMarker.getLatLng() : null; }\n"
+            html += "setTimeout(function(){ try{ initializeLocationTracking(map); }catch(e){ console.error(e);} }, 500);\n"
             # removed default campus marker per user request - map starts without the OSU pin
             html += "var parkingData = " + json.dumps(self.parking_places) + ";\n"
             html += "function colorForAvailable(avail) { if (avail > 7) return '#15803d'; if (avail >= 4) return '#f97316'; return '#dc2626'; }\n"
@@ -728,6 +776,20 @@ class MapWidget(QWebEngineView):
             self.page().runJavaScript(js)
         except Exception as e:
             print("JS call failed:", e)
+
+    def get_user_location(self, callback):
+        """Asynchronously get user's current location from JS as [lat, lon] or None.
+        callback will be called with the result.
+        """
+        try:
+            code = "(function(){ try { var u = (typeof getUserLocation==='function') ? getUserLocation() : null; if(u){ return [u.lat, u.lng]; } } catch(e){} return null; })();"
+            self.web_page.runJavaScript(code, callback)
+        except Exception as e:
+            print('get_user_location JS call failed:', e)
+            try:
+                callback(None)
+            except Exception:
+                pass
 
     def show_route(self, start_lat, start_lon, dest_lat, dest_lon, info_text="Route"):
         """Draw a simple straight line route (fallback)."""
@@ -796,7 +858,7 @@ class MainWindow(QMainWindow):
     """Main application window"""
     def __init__(self):
         super().__init__()
-        self.filters = [False, False, False, True, False, False]
+        self.filters = [False, False, False, False, False, False]
         self.setWindowTitle("OKState Campus Map - PySide6")
         self.setGeometry(100, 100, 1200, 800)
         # Store last searched destination for click handlers
@@ -860,7 +922,7 @@ class MainWindow(QMainWindow):
         act_cars = QAction("Cars", self)
         act_motor = QAction("Motorcycle", self)
         act_bike = QAction("Bike Lane", self)
-        act_nearest = QAction("Show Nearest ✔", self)
+        act_nearest = QAction("Show Nearest", self)
         act_full = QAction("Show Full Lots", self)
         act_permits = QAction("Show All Permits", self)
         self.filter_menu.addAction(act_cars)
@@ -981,79 +1043,106 @@ class MainWindow(QMainWindow):
         # Initialize selected passes (load from settings if exists)
         self.selected_passes = self.load_passes()
 
-        # Replace previous POI approach: use explicit parking locations provided by the user.
-        # User-provided primary locations (names kept minimal, coordinates provided). Longitudes use negative values for W.
-        self.parking_places = [
-            {
-                "name": "Student Union Garage", 
-                "lat": 36.1264, 
-                "lon": -97.0867, 
-                "capacity": 400, 
-                "available": 2,
-                "passes": ["staff", "green_commuter", "silver_commuter"]
-            },
-            {
-                "name": "Colvin Recreation Center", 
-                "lat": 36.1287, 
-                "lon": -97.0818, 
-                "capacity": 250, 
-                "available": 40,
-                "passes": ["staff", "green_commuter"]
-            },
-            {
-                "name": "University Commons West", 
-                "lat": 36.1287, 
-                "lon": -97.0664, 
-                "capacity": 300, 
-                "available": 55,
-                "passes": ["residence_hall", "staff"]
-            },
-            {
-                "name": "Drummond Hall Lot", 
-                "lat": 36.1260, 
-                "lon": -97.0701, 
-                "capacity": 120, 
-                "available": 3,
-                "passes": ["staff", "silver_commuter"]
-            },
-            {
-                "name": "Physical Sciences Building Lot", 
-                "lat": 36.1242, 
-                "lon": -97.0664, 
-                "capacity": 180, 
-                "available": 18,
-                "passes": ["staff", "green_commuter", "silver_commuter"]
-            },
-            {
-                "name": "Boone Pickens Stadium Lot A",
-                "lat": 36.1269,
-                "lon": -97.0739,
-                "capacity": 220,
-                "available": 5,
-                "passes": ["staff", "silver_commuter"]
-            },
-            {
-                "name": "IT Building Lot",
-                "lat": 36.1209,
-                "lon": -97.0678,
-                "capacity": 140,
-                "available": 22,
-                "passes": ["green_commuter", "silver_commuter"]
-            },
-            {
-                "name": "Agricultural Hall Lot",
-                "lat": 36.1277,
-                "lon": -97.0712,
-                "capacity": 200,
-                "available": 28,
-                "passes": ["staff", "green_commuter"]
-            },
-        ]
+        # Replace previous POI approach: load parking locations from JSON if present, else use defaults.
+        # Preferred path: repo-level app/data/parking.json
+        self.parking_places = []
+        _loaded = None
+        try:
+            candidates = [
+                # Prefer the website's shared data first
+                Path(__file__).parent.parent / "app" / "data" / "parking.json",
+                # Fallbacks
+                Path("code") / "parking.json",
+                Path("parking.json"),
+                Path(__file__).parent / "parking.json",
+            ]
+            for pth in candidates:
+                try:
+                    if pth.exists():
+                        with open(pth, 'r') as f:
+                            _loaded = json.load(f)
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            _loaded = None
+
+        if isinstance(_loaded, list) and _loaded:
+            self.parking_places = _loaded
+        else:
+            self.parking_places = [
+                {
+                    "name": "Student Union Garage",
+                    "lat": 36.1264,
+                    "lon": -97.0867,
+                    "capacity": 400,
+                    "available": 2,
+                    "passes": ["staff", "green_commuter", "silver_commuter"]
+                },
+                {
+                    "name": "Colvin Recreation Center",
+                    "lat": 36.1287,
+                    "lon": -97.0818,
+                    "capacity": 250,
+                    "available": 40,
+                    "passes": ["staff", "green_commuter"]
+                },
+                {
+                    "name": "University Commons West",
+                    "lat": 36.1287,
+                    "lon": -97.0664,
+                    "capacity": 300,
+                    "available": 55,
+                    "passes": ["residence_hall", "staff"]
+                },
+                {
+                    "name": "Drummond Hall Lot",
+                    "lat": 36.1260,
+                    "lon": -97.0701,
+                    "capacity": 120,
+                    "available": 3,
+                    "passes": ["staff", "silver_commuter"]
+                },
+                {
+                    "name": "Physical Sciences Building Lot",
+                    "lat": 36.1242,
+                    "lon": -97.0664,
+                    "capacity": 180,
+                    "available": 18,
+                    "passes": ["staff", "green_commuter", "silver_commuter"]
+                },
+                {
+                    "name": "Boone Pickens Stadium Lot A",
+                    "lat": 36.1269,
+                    "lon": -97.0739,
+                    "capacity": 220,
+                    "available": 5,
+                    "passes": ["staff", "silver_commuter"]
+                },
+                {
+                    "name": "IT Building Lot",
+                    "lat": 36.1209,
+                    "lon": -97.0678,
+                    "capacity": 140,
+                    "available": 22,
+                    "passes": ["green_commuter", "silver_commuter"]
+                },
+                {
+                    "name": "Agricultural Hall Lot",
+                    "lat": 36.1277,
+                    "lon": -97.0712,
+                    "capacity": 200,
+                    "available": 28,
+                    "passes": ["staff", "green_commuter"]
+                },
+            ]
 
         for p in self.parking_places:
             cap = int(p.get('capacity', 0) or 0)
-            p['ada_spots'] = max(0, int(round(cap * 0.15)))
-            p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
+            if 'ada_spots' not in p:
+                p['ada_spots'] = max(0, int(round(cap * 0.15)))
+            if 'motorcycle_spots' not in p:
+                p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
 
         # Map widget (takes remaining space) - pass parking data so markers are shown
         self.map_widget = MapWidget(parking_places=self.parking_places)
@@ -1106,26 +1195,100 @@ class MainWindow(QMainWindow):
                 self.pull_up.set_results(dest['display_name'], top3, recommendation, nearest_alt)
                 self.pull_up.expand()
             elif self.filters[2]:
-                # Show approximate shortest bike route from campus center to destination and estimate time
-                start_lat = self.map_widget.okstate_lat
-                start_lon = self.map_widget.okstate_lon
-                dist_km = self._haversine_km(start_lat, start_lon, dest['lat'], dest['lon'])
-                # assume average bike speed ~15 km/h
-                bike_speed_kmh = 15.0
-                minutes = (dist_km / bike_speed_kmh) * 60.0
-                info_text = f"Bike route — {dist_km:.2f} km — approx {int(minutes)} min"
-                # Use a new MapWidget helper to draw a route polyline and markers
+                # Bike lane: use user's current location and real cycling route (OSRM bicycle with steps)
+                def _after_loc(loc):
+                    try:
+                        if not loc or not isinstance(loc, (list, tuple)):
+                            # No user location available; fall back to campus center straight line
+                            start_lat = self.map_widget.okstate_lat
+                            start_lon = self.map_widget.okstate_lon
+                            dist_km = self._haversine_km(start_lat, start_lon, dest['lat'], dest['lon'])
+                            bike_speed_kmh = 15.0
+                            minutes = int(round((dist_km / bike_speed_kmh) * 60.0))
+                            info_text = f"Bike route — {dist_km:.2f} km — approx {minutes} min"
+                            try:
+                                self.map_widget.show_route(start_lat, start_lon, dest['lat'], dest['lon'], info_text)
+                            except Exception:
+                                self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
+                            self.pull_up.set_results(dest['display_name'], [{'name':'Bike route','lat':dest['lat'],'lon':dest['lon'],'capacity':0,'available':0,'distance_km':dist_km}], None)
+                            self.pull_up.expand()
+                            return
+
+                        start_lat, start_lon = float(loc[0]), float(loc[1])
+                        # Try OSRM bicycle routing from user location to destination with steps
+                        route_coords = None
+                        distance_km = None
+                        duration_min = None
+                        steps_list = []
+                        try:
+                            osrm_url = (
+                                f"https://router.project-osrm.org/route/v1/bicycle/"
+                                f"{start_lon},{start_lat};{dest['lon']},{dest['lat']}?overview=full&geometries=geojson&steps=true"
+                            )
+                            resp = requests.get(osrm_url, timeout=8)
+                            if resp.status_code == 200:
+                                body = resp.json()
+                                routes = (body or {}).get('routes') or []
+                                if routes:
+                                    r = routes[0]
+                                    geom = (((r or {}).get('geometry') or {}).get('coordinates')) or []
+                                    route_coords = [[lat, lon] for lon, lat in geom]
+                                    distance_km = float((r.get('distance') or 0.0)) / 1000.0
+                                    duration_min = int(round(float((r.get('duration') or 0.0)) / 60.0))
+                                    legs = (r.get('legs') or [])
+                                    if legs:
+                                        for st in (legs[0].get('steps') or []):
+                                            man = st.get('maneuver', {})
+                                            t = man.get('type', '')
+                                            m = man.get('modifier', '')
+                                            road = st.get('name') or 'road'
+                                            dist = (st.get('distance') or 0.0)/1000.0
+                                            # simple humanization
+                                            action = t.replace('_', ' ').title()
+                                            if m:
+                                                action = f"{action} {m.title()}"
+                                            steps_list.append(f"{action} onto {road} — {dist:.2f} km")
+                        except Exception as e:
+                            print('OSRM bicycle routing failed:', e)
+
+                        self.map_widget.clear_highlights()
+                        if route_coords:
+                            info_text = f"Bike route — {distance_km:.2f} km — approx {duration_min} min"
+                            self.map_widget.draw_route_polyline(
+                                route_coords,
+                                start_lat, start_lon,
+                                dest['lat'], dest['lon'],
+                                f"{dest['display_name']}<br>{info_text}"
+                            )
+                            # Show turn-by-turn directions in the pull-up
+                            try:
+                                self.pull_up.show_bike_directions(dest['display_name'], steps_list, info_text)
+                            except Exception:
+                                # Fallback to concise summary
+                                self.pull_up.set_results(dest['display_name'], [{
+                                    'name': 'Bike route', 'lat': dest['lat'], 'lon': dest['lon'], 'capacity': 0, 'available': 0, 'distance_km': distance_km
+                                }], None)
+                                self.pull_up.expand()
+                        else:
+                            # Fallback to straight line from user location
+                            dist_km = self._haversine_km(start_lat, start_lon, dest['lat'], dest['lon'])
+                            bike_speed_kmh = 15.0
+                            minutes = int(round((dist_km / bike_speed_kmh) * 60.0))
+                            info_text = f"Bike route — {dist_km:.2f} km — approx {minutes} min"
+                            try:
+                                self.map_widget.show_route(start_lat, start_lon, dest['lat'], dest['lon'], info_text)
+                            except Exception:
+                                self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
+                            self.pull_up.set_results(dest['display_name'], [{'name':'Bike route','lat':dest['lat'],'lon':dest['lon'],'capacity':0,'available':0,'distance_km':dist_km}], None)
+                            self.pull_up.expand()
+                    except Exception as e:
+                        print('Bike lane flow failed:', e)
+                # Request current location from the web map (via JS getUserLocation)
                 try:
-                    self.map_widget.show_route(start_lat, start_lon, dest['lat'], dest['lon'], info_text)
-                except Exception:
-                    # fallback: just add destination marker
-                    self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
-                # Populate pull-up with a concise bike info entry
-                bike_info = [{
-                    'name': 'Bike route', 'lat': dest['lat'], 'lon': dest['lon'], 'capacity': 0, 'available': 0, 'distance_km': dist_km
-                }]
-                self.pull_up.set_results(dest['display_name'], bike_info, None)
-                self.pull_up.expand()
+                    self.map_widget.get_user_location(_after_loc)
+                except Exception as e:
+                    print('get_user_location failed:', e)
+                    _after_loc(None)
         except Exception as e:
             print('select_filter failed:', e)
 
@@ -1153,16 +1316,14 @@ class MainWindow(QMainWindow):
                     spot_passes.add('ada')
 
                 active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
-                if (not active_passes or (spot_passes & active_passes) or self.filters[5]) and (p['available'] > 0 or self.filters[4]):
+                if (not active_passes or (spot_passes & active_passes) or self.filters[5]):
                     d = self._haversine_km(dest_lat, dest_lon, p['lat'], p['lon'])
                     enriched.append({
                         'name': p['name'], 'lat': p['lat'], 'lon': p['lon'], 'capacity': p['capacity'], 'available': p['available'], 'distance_km': d, 'passes': list(spot_passes)
                     })
 
             enriched.sort(key=lambda x: x['distance_km'])
-            top3 = enriched
-            if self.filters[3]:
-                top3 = enriched[:3]
+            top3 = enriched[:3]
 
             def color_for_avail(a):
                 if a > 7:

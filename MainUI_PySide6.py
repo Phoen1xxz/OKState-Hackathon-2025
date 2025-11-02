@@ -8,8 +8,8 @@ import sys
 import os
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QFrame, QLabel, QDialog, QSizePolicy, QLineEdit, QMessageBox, QMenu)
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QEvent, QUrl, QPoint
+                             QHBoxLayout, QPushButton, QFrame, QLabel, QDialog, QSizePolicy, QLineEdit, QMessageBox, QMenu, QCompleter, QScrollArea)
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QEvent, QUrl, QPoint, QStringListModel, QTimer
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtGui import QAction
@@ -37,54 +37,60 @@ class PullUpWidget(QWidget):
         
         # Create handle
         self.handle = QFrame(self)
-        self.handle.setFixedHeight(50)
-        self.handle.setStyleSheet("background-color: #2563eb; border-radius: 5px 5px 0 0;")
-        # Use horizontal layout so we can place a Clear button on the right
+        self.handle.setFixedHeight(28)
+        self.handle.setStyleSheet("background-color: transparent;")
         self.handle_layout = QHBoxLayout(self.handle)
-        self.handle_layout.setContentsMargins(8, 0, 8, 0)
-
-        self.label = QLabel("⬆ Pull Up Tab", self.handle)
-        self.label.setAlignment(Qt.AlignCenter)
-        self.label.setStyleSheet("color: white; font-size: 16px; font-weight: bold; padding: 10px;")
-        self.handle_layout.addWidget(self.label, 1)
-
-        # Clear button on the handle (small)
-        self.clear_btn = QPushButton("Clear", self.handle)
-        self.clear_btn.setFixedSize(64, 28)
-        self.clear_btn.setStyleSheet("background-color:#f97316; color:white; border-radius:4px; font-weight:bold;")
-        self.clear_btn.clicked.connect(self.on_clear_clicked)
-        self.handle_layout.addWidget(self.clear_btn)
+        self.handle_layout.setContentsMargins(0, 6, 0, 6)
+        self.handle_layout.setSpacing(0)
+        spacer_left = QWidget(self.handle)
+        spacer_left.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.handle_layout.addWidget(spacer_left)
+        self.grip = QFrame(self.handle)
+        self.grip.setFixedSize(48, 4)
+        self.grip.setStyleSheet("background-color: #cbd5e1; border-radius: 2px;")
+        self.handle_layout.addWidget(self.grip)
+        spacer_right = QWidget(self.handle)
+        spacer_right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.handle_layout.addWidget(spacer_right)
+        # Right-side action buttons
+        self.back_btn = QPushButton("Back", self.handle)
+        self.back_btn.setFixedHeight(22)
+        self.back_btn.setStyleSheet("QPushButton{background-color:#f1f5f9; border:1px solid #cbd5e1; border-radius:4px; padding:2px 8px;} QPushButton:hover{background-color:#e2e8f0;}")
+        self.back_btn.clicked.connect(self.on_back_clicked)
+        self.handle_layout.addWidget(self.back_btn)
+        self.clear_history_btn = QPushButton("Clear", self.handle)
+        self.clear_history_btn.setFixedHeight(22)
+        self.clear_history_btn.setToolTip("Clear search history")
+        self.clear_history_btn.setStyleSheet("QPushButton{background-color:#fef2f2; color:#b91c1c; border:1px solid #fecaca; border-radius:4px; padding:2px 8px;} QPushButton:hover{background-color:#fee2e2;}")
+        self.clear_history_btn.clicked.connect(self.on_clear_history_clicked)
+        self.handle_layout.addWidget(self.clear_history_btn)
+        # Initial visibility: show Clear (history view), hide Back
+        self.back_btn.setVisible(False)
+        self.clear_history_btn.setVisible(True)
         main_layout.addWidget(self.handle)
         
-        # Content area
-        self.content = QWidget(self)
-        self.content.setStyleSheet("background-color: #e0e7ff;")
-        self.content.setFixedHeight(0)
-        self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
-        
-        title = QLabel("Pull Up Tab Content")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #1e40af; padding: 30px;")
-        self.content_layout.addWidget(title)
-        
-        content_label = QLabel("This is the pull-up tab content area.\nDrag the blue bar down to close.")
-        content_label.setAlignment(Qt.AlignCenter)
-        content_label.setStyleSheet("font-size: 14px; color: #334155; padding: 20px;")
-        self.content_layout.addWidget(content_label)
+        # Content area with scroll
+        self.content = QScrollArea(self)
+        self.content.setWidgetResizable(True)
+        self.content.setStyleSheet("QScrollArea { background-color: #ffffff; border: none; }")
+        self.content.setFixedHeight(90)
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet("background-color: #ffffff;")
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
+        self.content.setWidget(self.content_widget)
         main_layout.addWidget(self.content)
         
         # Enable mouse tracking and install event filter
         self.handle.setMouseTracking(True)
         self.handle.installEventFilter(self)
-        self.label.installEventFilter(self)
         
         # Animation
         self.animation = QPropertyAnimation(self.content, b"maximumHeight")
         self.animation.setDuration(300)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.animation.finished.connect(self.animationFinished)
-        self.content.setMaximumHeight(0)
+        self.content.setMaximumHeight(90)
 
     def set_results(self, destination_name, top3_list, recommendation):
         """Populate the pull-up content with search results. Make parking spots clickable
@@ -161,7 +167,8 @@ class PullUpWidget(QWidget):
                     }
                     formatted_passes = [pass_names.get(p_id, p_id) for p_id in p['passes']]
                     pass_info = f" [Passes: {', '.join(formatted_passes)}]"
-                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {p['available']}/{p['capacity']} spots — {p['distance_km']:.2f} km{pass_info}")
+                minutes_walk = max(1, int(round((p.get('distance_km', 0) or 0) / 5.0 * 60)))
+                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {p['available']}/{p['capacity']} spots — {p['distance_km']:.2f} km — ~{minutes_walk} min walk{pass_info}")
                 btn.setStyleSheet("""
                     QPushButton {
                         background-color: #f8fafc;
@@ -204,7 +211,8 @@ class PullUpWidget(QWidget):
                 }
                 formatted_passes = [pass_names.get(p_id, p_id) for p_id in recommendation['passes']]
                 pass_info = f" [Passes: {', '.join(formatted_passes)}]"
-            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {recommendation['available']}/{recommendation['capacity']} spots — {recommendation['distance_km']:.2f} km{pass_info}")
+            rmin_walk = max(1, int(round((recommendation.get('distance_km', 0) or 0) / 5.0 * 60)))
+            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {recommendation['available']}/{recommendation['capacity']} spots — {recommendation['distance_km']:.2f} km — ~{rmin_walk} min walk{pass_info}")
             rec_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #ecfdf5;
@@ -224,6 +232,13 @@ class PullUpWidget(QWidget):
             rec_btn.parking_data = recommendation
             rec_btn.clicked.connect(lambda checked, r=recommendation: self.on_parking_clicked(r))
             self.content_layout.addWidget(rec_btn)
+        # Toggle handle buttons visibility based on context
+        try:
+            has_results = bool(top3_list)
+            self.back_btn.setVisible(has_results)
+            self.clear_history_btn.setVisible(not has_results)
+        except Exception:
+            pass
         
     def on_parking_clicked(self, parking):
         """Handle when a parking spot button is clicked in the pull-up."""
@@ -250,9 +265,55 @@ class PullUpWidget(QWidget):
                 f"{parking['name']} ({parking['available']}/{parking['capacity']} spots)",
                 parking['distance_km']
             )
+            try:
+                wmin = max(1, int(round((parking.get('distance_km', 0) or 0) / 5.0 * 60)))
+                info = QLabel(f"Selected: {parking['name']} — {parking['distance_km']:.2f} km (~{wmin} min walk) from {dest['display_name']}")
+                info.setStyleSheet("font-size: 13px; color: #334155; padding: 6px 4px;")
+                self.content_layout.insertWidget(0, info)
+            except Exception:
+                pass
         except Exception as e:
             print(f"Failed to show parking selection: {e}")
     
+    def on_clear_history_clicked(self):
+        """Clear stored search history and refresh history view."""
+        try:
+            if self.parent_widget and hasattr(self.parent_widget, 'search_history'):
+                self.parent_widget.search_history = []
+                # persist to disk if possible
+                try:
+                    hf = getattr(self.parent_widget, '_history_file', None)
+                    if hf:
+                        with open(hf, 'w') as f:
+                            json.dump([], f)
+                except Exception:
+                    pass
+            # refresh history view
+            self.set_results("Recent searches", [], None)
+            self.collapse()
+        except Exception:
+            pass
+
+    def on_back_clicked(self):
+        """Unselect parking and return to search results for last destination."""
+        try:
+            if not self.parent_widget:
+                return
+            win = self.parent_widget
+            dest = getattr(win, '_last_destination', None)
+            if not dest:
+                return
+            # recompute top3 and show markers
+            top3, recommendation = win.compute_nearest_parking(dest['lat'], dest['lon'])
+            js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
+            win.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
+            if js_top3:
+                win.map_widget.show_top3_markers(js_top3)
+            self.set_results(dest['display_name'], top3, recommendation)
+            self.expand()
+        except Exception:
+            pass
+
     def on_clear_clicked(self):
         """Clear highlights on the map and collapse the pull-up."""
         try:
@@ -266,8 +327,8 @@ class PullUpWidget(QWidget):
             pass
             
     def eventFilter(self, obj, event):
-        """Handle events from handle and label"""
-        if obj in [self.handle, self.label]:
+        """Handle events from handle"""
+        if obj is self.handle:
             if event.type() == QEvent.Type.MouseButtonPress:
                 self.mousePressEvent(event)
                 return True
@@ -308,7 +369,7 @@ class PullUpWidget(QWidget):
         
     def expand(self):
         """Animate to expanded state"""
-        self.content.setFixedHeight(self.content.height())  # Lock current height
+        self.content.setFixedHeight(self.content.height())
         self.animation.setStartValue(self.content.height())
         self.animation.setEndValue(500)
         self.animation.start()
@@ -316,9 +377,9 @@ class PullUpWidget(QWidget):
         
     def collapse(self):
         """Animate to collapsed state"""
-        self.content.setFixedHeight(self.content.height())  # Lock current height
+        self.content.setFixedHeight(self.content.height())
         self.animation.setStartValue(self.content.height())
-        self.animation.setEndValue(0)
+        self.animation.setEndValue(90)
         self.animation.start()
         self.is_expanded = False
         
@@ -356,8 +417,8 @@ class MapWidget(QWebEngineView):
                     print(f"Not granting permission for {feature}")
                     self.setFeaturePermission(url, feature, QWebEnginePage.PermissionPolicy.DeniedPermission)
         
-        self.page = WebPage(profile, self)
-        self.setPage(self.page)
+        self.web_page = WebPage(profile, self)
+        self.setPage(self.web_page)
         
         # OKState coordinates
         self.okstate_lat = 36.1224
@@ -535,8 +596,7 @@ class MapWidget(QWebEngineView):
                     }}).addTo(map);
                     
                     var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + 
-                                  '<br>Available: ' + p.available + 
-                                  (p.ada_spots ? '<br>ADA: ' + p.ada_spots : '');
+                                  '<br>Available: ' + p.available;
                     circle.bindPopup(popupHtml);
                     
                     var label = L.tooltip({{
@@ -562,7 +622,7 @@ class MapWidget(QWebEngineView):
             html += "var parkingData = " + json.dumps(self.parking_places) + ";\n"
             html += "function colorForAvailable(avail) { if (avail > 7) return '#15803d'; if (avail >= 4) return '#f97316'; return '#dc2626'; }\n"
             html += "var parsedParking = parkingData; if (typeof parkingData === 'string') { try { parsedParking = JSON.parse(parkingData); } catch(e) { parsedParking = []; } }\n"
-            html += "parsedParking.forEach(function(p) { var circle = L.circleMarker([p.lat, p.lon], { radius: 10, color: colorForAvailable(p.available), fillColor: colorForAvailable(p.available), fillOpacity: 0.9 }).addTo(map); var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + '<br>Available: ' + p.available + (p.ada_spots? '<br>ADA: ' + p.ada_spots : ''); circle.bindPopup(popupHtml); var label = L.tooltip({permanent: false, direction: 'top', offset: [0, -12]}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')'); circle.bindTooltip(label); });\n"
+            html += "parsedParking.forEach(function(p) { var circle = L.circleMarker([p.lat, p.lon], { radius: 10, color: colorForAvailable(p.available), fillColor: colorForAvailable(p.available), fillOpacity: 0.9 }).addTo(map); var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + '<br>Available: ' + p.available; circle.bindPopup(popupHtml); var label = L.tooltip({permanent: false, direction: 'top', offset: [0, -12]}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')'); circle.bindTooltip(label); });\n"
             html += "window._destMarker = null; window._top3Markers = []; window._distanceLine = null; window._selectedParking = null;\n"
             html += "function clearHighlights() { try { if (window._destMarker) { map.removeLayer(window._destMarker); window._destMarker = null; } if (window._top3Markers) { window._top3Markers.forEach(function(m){ map.removeLayer(m); }); window._top3Markers = []; } if (window._distanceLine) { map.removeLayer(window._distanceLine); window._distanceLine = null; } if (window._selectedParking) { map.removeLayer(window._selectedParking); window._selectedParking = null; } } catch(e) { console.error(e); } }\n"
             html += "function addDestination(lat, lon, label) { clearHighlights(); window._destMarker = L.marker([lat, lon]).addTo(map); window._destMarker.bindPopup(label).openPopup(); map.setView([lat, lon], 16); }\n"
@@ -592,7 +652,7 @@ class MapWidget(QWebEngineView):
     def add_destination_marker(self, lat, lon, label):
         js = f"addDestination({lat}, {lon}, {json.dumps(label)});"
         try:
-            self.page().runJavaScript(js)
+            self.web_page.runJavaScript(js)
         except Exception as e:
             print("JS call failed:", e)
 
@@ -642,7 +702,7 @@ class MapWidget(QWebEngineView):
 
     def clear_highlights(self):
         try:
-            self.page().runJavaScript("clearHighlights();")
+            self.web_page.runJavaScript("clearHighlights();")
         except Exception as e:
             print("JS call failed:", e)
 
@@ -654,6 +714,7 @@ class MainWindow(QMainWindow):
     """Main application window"""
     def __init__(self):
         super().__init__()
+        self.filters = [False, False, False, False, False, False]
         self.setWindowTitle("OKState Campus Map - PySide6")
         self.setGeometry(100, 100, 1200, 800)
         # Store last searched destination for click handlers
@@ -717,14 +778,29 @@ class MainWindow(QMainWindow):
         act_cars = QAction("Cars", self)
         act_motor = QAction("Motorcycle", self)
         act_bike = QAction("Bike Lane", self)
+        act_nearest = QAction("Show Nearest", self)
+        act_full = QAction("Show Full Lots", self)
+        act_permits = QAction("Show All Permits", self)
         self.filter_menu.addAction(act_cars)
         self.filter_menu.addAction(act_motor)
         self.filter_menu.addAction(act_bike)
+        self.filter_menu.addAction(act_nearest)
+        self.filter_menu.addAction(act_full)
+        self.filter_menu.addAction(act_permits)
 
         # Connect actions to the same handler
-        act_cars.triggered.connect(lambda: self.select_filter("Cars"))
-        act_motor.triggered.connect(lambda: self.select_filter("Motorcycle"))
-        act_bike.triggered.connect(lambda: self.select_filter("Bike Lane"))
+        act_cars.triggered.connect(lambda: self.select_filter(0, act_cars))
+        act_motor.triggered.connect(lambda: self.select_filter(1, act_motor))
+        act_bike.triggered.connect(lambda: self.select_filter(2, act_bike))
+        act_nearest.triggered.connect(lambda: self.select_filter(3, act_nearest))
+        act_full.triggered.connect(lambda: self.select_filter(4, act_full))
+        act_permits.triggered.connect(lambda: self.select_filter(5, act_permits))
+        #act_cars.triggered.connect(lambda: self.select_filter(0))
+        #act_motor.triggered.connect(lambda: self.select_filter(1))
+        #act_bike.triggered.connect(lambda: self.select_filter(2))
+        #act_nearest.triggered.connect(lambda: self.select_filter(3))
+        #act_full.triggered.connect(lambda: self.select_filter(4))
+        #act_permits.triggered.connect(lambda: self.select_filter(5))
 
         # Show menu when button clicked (positioned below the button)
         self.filter_btn.clicked.connect(lambda: self.filter_menu.exec(self.filter_btn.mapToGlobal(QPoint(0, self.filter_btn.height()))))
@@ -754,6 +830,18 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.search_input)
         # Allow pressing Enter to trigger search
         self.search_input.returnPressed.connect(self.search_destination)
+        self.completer = QCompleter(self)
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self._suggest_model = QStringListModel(self)
+        self.completer.setModel(self._suggest_model)
+        self.search_input.setCompleter(self.completer)
+        # Debounced suggestions to avoid lag
+        self._suggest_timer = QTimer(self)
+        self._suggest_timer.setSingleShot(True)
+        self._suggest_timer.setInterval(350)
+        self._suggest_timer.timeout.connect(lambda: self.update_suggestions(self.search_input.text()))
+        self.search_input.textEdited.connect(lambda _t: (self._suggest_timer.stop(), self._suggest_timer.start()))
+        self.completer.activated.connect(lambda text: self.search_input.setText(text))
 
         self.search_btn = QPushButton("Search")
         self.search_btn.setStyleSheet("""
@@ -778,8 +866,16 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
         # Home button to reset map view
         self.home_btn = QPushButton("Home")
-        self.home_btn.setStyleSheet("background-color:#efefef; padding:6px 10px; border-radius:6px;")
-        self.home_btn.clicked.connect(self.go_home)
+        self.home_btn.setStyleSheet("background-color:#f97316; color:white; padding:6px 10px; border-radius:6px;")
+        # Reset to initial state via lambda (clear input, reset map, show history)
+        self.home_btn.clicked.connect(lambda: (
+            self.search_input.clear(),
+            setattr(self, '_last_destination', None),
+            self.map_widget.clear_highlights(),
+            self.map_widget.set_view(self.map_widget.okstate_lat, self.map_widget.okstate_lon, 15),
+            self.pull_up.set_results("Recent searches", [], None),
+            self.pull_up.collapse()
+        ))
         top_layout.addWidget(self.home_btn)
 
         # Settings button for pass selection
@@ -811,7 +907,7 @@ class MainWindow(QMainWindow):
                 "lat": 36.1264, 
                 "lon": -97.0867, 
                 "capacity": 400, 
-                "available": 75,
+                "available": 2,
                 "passes": ["staff", "green_commuter", "silver_commuter"]
             },
             {
@@ -835,7 +931,7 @@ class MainWindow(QMainWindow):
                 "lat": 36.1260, 
                 "lon": -97.0701, 
                 "capacity": 120, 
-                "available": 12,
+                "available": 3,
                 "passes": ["staff", "silver_commuter"]
             },
             {
@@ -843,19 +939,43 @@ class MainWindow(QMainWindow):
                 "lat": 36.1242, 
                 "lon": -97.0664, 
                 "capacity": 180, 
-                "available": 20,
+                "available": 18,
                 "passes": ["staff", "green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Boone Pickens Stadium Lot A",
+                "lat": 36.1269,
+                "lon": -97.0739,
+                "capacity": 220,
+                "available": 5,
+                "passes": ["staff", "silver_commuter"]
+            },
+            {
+                "name": "IT Building Lot",
+                "lat": 36.1209,
+                "lon": -97.0678,
+                "capacity": 140,
+                "available": 22,
+                "passes": ["green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Agricultural Hall Lot",
+                "lat": 36.1277,
+                "lon": -97.0712,
+                "capacity": 200,
+                "available": 28,
+                "passes": ["staff", "green_commuter"]
             },
         ]
 
-        # Randomly assign a few ADA spots per lot (1-6, but not exceeding capacity)
         for p in self.parking_places:
-            max_ada = min(6, max(1, p['capacity'] // 50))
-            p['ada_spots'] = random.randint(1, max_ada)
+            cap = int(p.get('capacity', 0) or 0)
+            p['ada_spots'] = max(0, int(round(cap * 0.15)))
+            p['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
 
         # Try to augment with nearby OSM parkings using Overpass (no API key required). This is best-effort.
         try:
-            def fetch_nearby_overpass(lat, lon, radius_m=800, limit=6):
+            def fetch_nearby_overpass(lat, lon, radius_m=1500, limit=12):
                 query = f"[out:json][timeout:10];(node[amenity=parking](around:{radius_m},{lat},{lon});way[amenity=parking](around:{radius_m},{lat},{lon});relation[amenity=parking](around:{radius_m},{lat},{lon}););out center {limit};"
                 url = "https://overpass-api.de/api/interpreter"
                 r = requests.post(url, data={'data': query}, timeout=8)
@@ -878,13 +998,16 @@ class MainWindow(QMainWindow):
                         try:
                             capacity = int(el.get('tags', {}).get('capacity', 0))
                         except Exception:
-                            capacity = 50
+                            capacity = 60
+                        if not capacity or capacity <= 0:
+                            capacity = 60
+                        available = max(5, int(capacity * 0.2))
                         results.append({
                             'name': name,
                             'lat': lat2,
                             'lon': lon2,
                             'capacity': capacity,
-                            'available': max(1, capacity // 10)
+                            'available': available
                         })
                         if len(results) >= limit:
                             break
@@ -898,13 +1021,12 @@ class MainWindow(QMainWindow):
             for ex in extras:
                 dup = any(abs(ex['lat'] - p['lat']) < 1e-5 and abs(ex['lon'] - p['lon']) < 1e-5 for p in self.parking_places)
                 if not dup:
-                    ex['ada_spots'] = random.randint(1, min(4, max(1, ex['capacity'] // 50)))
-                    # Assign random passes to OSM parking places
+                    cap = int(ex.get('capacity', 0) or 0)
+                    ex['ada_spots'] = max(0, int(round(cap * 0.15)))
+                    ex['motorcycle_spots'] = max(0, int(round(cap * 0.05)))
                     possible_passes = ["staff", "green_commuter", "silver_commuter", "residence_hall"]
                     num_passes = random.randint(1, 3)
-                    ex['passes'] = random.sample(possible_passes, num_passes)
-                    if ex['ada_spots'] > 0:
-                        ex['passes'].append("ada")
+                    ex['passes'] = random.sample(possible_passes, num_passes) + (["ada"] if ex['ada_spots'] > 0 else [])
                     self.parking_places.append(ex)
         except Exception as e:
             print('Overpass fetch skipped/failed:', e)
@@ -919,11 +1041,15 @@ class MainWindow(QMainWindow):
         # Pull-up tab (pass main window as parent so pull-up can call back)
         self.pull_up = PullUpWidget(parent=self)
         layout.addWidget(self.pull_up)
+        try:
+            self.pull_up.set_results("Recent searches", [], None)
+        except Exception:
+            pass
         
     # Filter menu is implemented as a QMenu (see setup near top bar). Old
     # toggle/show/hide methods for the previous FilterDropdown widget were removed.
     
-    def select_filter(self, filter_type):
+    def select_filter(self, filter_type, actionVal):
         """Handle filter selection"""
         print(f"Filter selected: {filter_type}")
         # Close the menu if it's open
@@ -932,9 +1058,12 @@ class MainWindow(QMainWindow):
                 self.filter_menu.close()
         except Exception:
             pass
-        # Remember active filter
-        self.active_filter = filter_type
-
+        # Toggle the filter
+        self.filters[filter_type] = not self.filters[filter_type]
+        if self.filters[filter_type]:
+            actionVal.setText(actionVal.text() + " ✔")
+        else:
+            actionVal.setText(actionVal.text()[:-2])
         # If no destination is set yet, prompt user to search first
         if not getattr(self, '_last_destination', None):
             QMessageBox.information(self, "Filter", "Please search for a destination first.")
@@ -943,7 +1072,7 @@ class MainWindow(QMainWindow):
         # Apply the selected filter to the last destination
         dest = self._last_destination
         try:
-            if filter_type in ("Cars", "Motorcycle"):
+            if self.filters[0] or self.filters[1]:
                 top3, recommendation = self.compute_nearest_parking(dest['lat'], dest['lon'])
                 # show top3 markers and populate pull-up
                 js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
@@ -952,7 +1081,7 @@ class MainWindow(QMainWindow):
                     self.map_widget.show_top3_markers(js_top3)
                 self.pull_up.set_results(dest['display_name'], top3, recommendation)
                 self.pull_up.expand()
-            elif filter_type == "Bike Lane":
+            elif self.filters[2]:
                 # Show approximate shortest bike route from campus center to destination and estimate time
                 start_lat = self.map_widget.okstate_lat
                 start_lon = self.map_widget.okstate_lon
@@ -1000,7 +1129,7 @@ class MainWindow(QMainWindow):
                     spot_passes.add('ada')
 
                 active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
-                if not active_passes or (spot_passes & active_passes):
+                if (not active_passes or (spot_passes & active_passes) or self.filters[5]):
                     d = self._haversine_km(dest_lat, dest_lon, p['lat'], p['lon'])
                     enriched.append({
                         'name': p['name'], 'lat': p['lat'], 'lon': p['lon'], 'capacity': p['capacity'], 'available': p['available'], 'distance_km': d, 'passes': list(spot_passes)
@@ -1009,7 +1138,6 @@ class MainWindow(QMainWindow):
             enriched.sort(key=lambda x: x['distance_km'])
             top3 = enriched[:3]
 
-            SIMILAR_DISTANCE_KM = 0.05
             def color_for_avail(a):
                 if a > 7:
                     return 'green'
@@ -1017,31 +1145,54 @@ class MainWindow(QMainWindow):
                     return 'orange'
                 return 'red'
 
-            candidates = [p for p in enriched if color_for_avail(p['available']) != 'red']
+            non_red = [p for p in top3 if color_for_avail(p['available']) in ('green', 'orange')]
             recommendation = None
-            if candidates:
-                closest = candidates[0]
-                group = [c for c in candidates if abs(c['distance_km'] - closest['distance_km']) <= SIMILAR_DISTANCE_KM]
-                if len(group) == 1:
-                    recommendation = closest
+            if non_red:
+                greens = [p for p in non_red if color_for_avail(p['available']) == 'green']
+                if greens:
+                    recommendation = min(greens, key=lambda x: x['distance_km'])
                 else:
-                    greens = [g for g in group if color_for_avail(g['available']) == 'green']
-                    if greens:
-                        greens.sort(key=lambda x: (-x['available'], x['distance_km']))
-                        recommendation = greens[0]
-                    else:
-                        oranges = [g for g in group if color_for_avail(g['available']) == 'orange']
-                        if oranges:
-                            oranges.sort(key=lambda x: (-x['available'], x['distance_km']))
-                            recommendation = oranges[0]
-                        else:
-                            group.sort(key=lambda x: (-x['available'], x['distance_km']))
-                            recommendation = group[0]
+                    oranges = [p for p in non_red if color_for_avail(p['available']) == 'orange']
+                    if oranges:
+                        recommendation = min(oranges, key=lambda x: x['distance_km'])
 
             return top3, recommendation
         except Exception as e:
             print('compute_nearest_parking failed:', e)
             return [], None
+
+    def update_suggestions(self, text):
+        t = (text or '').strip()
+        if len(t) < 3:
+            self._suggest_model.setStringList([])
+            return
+        try:
+            # Bias results to Stillwater campus area with a viewbox and bounded search
+            # Viewbox approx around OSU Stillwater campus
+            viewbox = "-97.10,36.14,-97.05,36.10"  # left,top,right,bottom
+            params = {
+                "q": f"{t}, Stillwater OK",
+                "format": "json",
+                "limit": 5,
+                "viewbox": viewbox,
+                "bounded": 1
+            }
+            resp = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers={"User-Agent": "OKStateParkingApp/1.0"}, timeout=4)
+            items = resp.json() if resp.status_code == 200 else []
+            # Prefer Edmon Low Library when searching for library
+            names = [i.get('display_name','') for i in items]
+            tl = t.lower()
+            if "library" in tl:
+                # Promote any item that contains 'Edmon Low Library'
+                edmon = [n for n in names if 'edmon low library' in n.lower()]
+                others = [n for n in names if 'edmon low library' not in n.lower()]
+                names = edmon + others
+                # If not present, still suggest a canonical name to guide the user
+                if not edmon:
+                    names = ["Edmon Low Library, Stillwater, OK"] + names
+            self._suggest_model.setStringList(names)
+        except Exception:
+            self._suggest_model.setStringList([])
 
     def search_destination(self):
         """Search for a destination, show it on the map and populate pull-up with nearest parking info."""
@@ -1071,8 +1222,10 @@ class MainWindow(QMainWindow):
         # Use Nominatim to geocode the destination (append Stillwater OK to bias results)
         q = f"{query}, Stillwater OK"
         try:
-            # request multiple results so we can pick the best match
-            resp = requests.get("https://nominatim.openstreetmap.org/search", params={"q": q, "format": "json", "limit": 5, "addressdetails": 1}, headers={"User-Agent": "OKStateParkingApp/1.0"}, timeout=6)
+            # request multiple results with campus-bounded bias
+            viewbox = "-97.10,36.14,-97.05,36.10"
+            params = {"q": q, "format": "json", "limit": 5, "addressdetails": 1, "viewbox": viewbox, "bounded": 1}
+            resp = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers={"User-Agent": "OKStateParkingApp/1.0"}, timeout=6)
         except Exception as e:
             QMessageBox.critical(self, "Search error", f"Network/geocoding error:\n{e}")
             return
@@ -1089,6 +1242,16 @@ class MainWindow(QMainWindow):
         # Choose best result heuristically: prefer results whose display_name contains query, then type/library, else first
         def choose_best_result(results_list, query_text):
             ql = query_text.lower()
+            # Special preference for Edmon Low Library when user searches for library
+            if 'library' in ql:
+                for r in results_list:
+                    dn = r.get('display_name','').lower()
+                    if 'edmon low library' in dn:
+                        return r
+                for r in results_list:
+                    dn = r.get('display_name','').lower()
+                    if 'oklahoma state university library' in dn:
+                        return r
             # first pass: display_name contains query words
             for r in results_list:
                 dn = r.get('display_name','').lower()
@@ -1134,7 +1297,7 @@ class MainWindow(QMainWindow):
             
             # If no passes are selected, show all spots
             # If passes are selected, only show spots that match at least one selected pass
-            if not active_passes or (spot_passes & active_passes):
+            if (not active_passes or (spot_passes & active_passes) or self.filters[5]):
                 d = self._haversine_km(dest_lat, dest_lon, p["lat"], p["lon"])
                 enriched.append({
                     "name": p["name"],
@@ -1149,11 +1312,6 @@ class MainWindow(QMainWindow):
         enriched.sort(key=lambda x: x["distance_km"])
         top3 = enriched[:3]
 
-        # Recommendation logic per rules:
-        # - ignore red (available < 4)
-        # - primary by distance; if multiple within SIMILAR_DISTANCE_KM, prefer green then orange, then availability
-        SIMILAR_DISTANCE_KM = 0.05  # 50 meters
-
         def color_for_avail(a):
             if a > 7:
                 return 'green'
@@ -1161,32 +1319,16 @@ class MainWindow(QMainWindow):
                 return 'orange'
             return 'red'
 
-        candidates = [p for p in enriched if color_for_avail(p['available']) != 'red']
+        non_red = [p for p in top3 if color_for_avail(p['available']) in ('green', 'orange')]
         recommendation = None
-        if candidates:
-            # already sorted by distance
-            closest = candidates[0]
-            # find group close to closest
-            group = [c for c in candidates if abs(c['distance_km'] - closest['distance_km']) <= SIMILAR_DISTANCE_KM]
-            if len(group) == 1:
-                recommendation = closest
+        if non_red:
+            greens = [p for p in non_red if color_for_avail(p['available']) == 'green']
+            if greens:
+                recommendation = min(greens, key=lambda x: x['distance_km'])
             else:
-                # prefer green in group
-                greens = [g for g in group if color_for_avail(g['available']) == 'green']
-                if greens:
-                    # choose green with highest availability, tie-breaker distance
-                    greens.sort(key=lambda x: (-x['available'], x['distance_km']))
-                    recommendation = greens[0]
-                else:
-                    # prefer orange with highest availability
-                    oranges = [g for g in group if color_for_avail(g['available']) == 'orange']
-                    if oranges:
-                        oranges.sort(key=lambda x: (-x['available'], x['distance_km']))
-                        recommendation = oranges[0]
-                    else:
-                        # fallback: highest availability
-                        group.sort(key=lambda x: (-x['available'], x['distance_km']))
-                        recommendation = group[0]
+                oranges = [p for p in non_red if color_for_avail(p['available']) == 'orange']
+                if oranges:
+                    recommendation = min(oranges, key=lambda x: x['distance_km'])
 
         # Update map markers and pull-up panel
         label = f"{display_name}".replace('"', '')

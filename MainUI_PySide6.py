@@ -8,10 +8,11 @@ import sys
 import os
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QFrame, QLabel, QDialog, QSizePolicy, QLineEdit, QMessageBox, QCompleter, QListWidget)
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QEvent, QUrl
+                             QHBoxLayout, QPushButton, QFrame, QLabel, QDialog, QSizePolicy, QLineEdit, QMessageBox, QMenu)
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QEvent, QUrl, QPoint
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtGui import QColor
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PySide6.QtGui import QAction
 import math
 import random
 import requests
@@ -147,7 +148,20 @@ class PullUpWidget(QWidget):
                 else:
                     color = 'red'
                 # Create a button for each parking spot (include color)
-                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {p['available']}/{p['capacity']} spots — {p['distance_km']:.2f} km")
+                # Format passes display
+                pass_info = ""
+                if p.get('passes'):
+                    # Convert pass IDs to display names
+                    pass_names = {
+                        'staff': 'Staff',
+                        'green_commuter': 'Green',
+                        'silver_commuter': 'Silver',
+                        'residence_hall': 'RH',
+                        'ada': 'ADA'
+                    }
+                    formatted_passes = [pass_names.get(p_id, p_id) for p_id in p['passes']]
+                    pass_info = f" [Passes: {', '.join(formatted_passes)}]"
+                btn = QPushButton(f"{idx}. {p['name']} ({color}) — {p['available']}/{p['capacity']} spots — {p['distance_km']:.2f} km{pass_info}")
                 btn.setStyleSheet("""
                     QPushButton {
                         background-color: #f8fafc;
@@ -178,7 +192,19 @@ class PullUpWidget(QWidget):
             # Make recommendation clickable too (include color)
             ravail = recommendation.get('available', 0)
             rcolor = 'green' if ravail > 7 else ('orange' if ravail >= 4 else 'red')
-            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {recommendation['available']}/{recommendation['capacity']} spots — {recommendation['distance_km']:.2f} km")
+            # Format passes display for recommendation
+            pass_info = ""
+            if recommendation.get('passes'):
+                pass_names = {
+                    'staff': 'Staff',
+                    'green_commuter': 'Green',
+                    'silver_commuter': 'Silver',
+                    'residence_hall': 'RH',
+                    'ada': 'ADA'
+                }
+                formatted_passes = [pass_names.get(p_id, p_id) for p_id in recommendation['passes']]
+                pass_info = f" [Passes: {', '.join(formatted_passes)}]"
+            rec_btn = QPushButton(f"{recommendation['name']} ({rcolor}) — {recommendation['available']}/{recommendation['capacity']} spots — {recommendation['distance_km']:.2f} km{pass_info}")
             rec_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #ecfdf5;
@@ -309,6 +335,30 @@ class MapWidget(QWebEngineView):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
+        # Enable geolocation
+        profile = QWebEngineProfile.defaultProfile()
+        profile.setHttpUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)")
+        
+        class WebPage(QWebEnginePage):
+            def javaScriptConsoleMessage(self, level, message, line, source):
+                print(f"JS {level}: {message} (line {line}, source: {source})")
+                
+            def acceptNavigationRequest(self, url, _type, isMainFrame):
+                print(f"Navigation request: {url}")
+                return True
+            
+            def featurePermissionRequested(self, url, feature):
+                print(f"Permission requested for {feature} from {url}")
+                if feature == QWebEnginePage.Feature.Geolocation:
+                    print("Granting geolocation permission")
+                    self.setFeaturePermission(url, feature, QWebEnginePage.PermissionPolicy.GrantedPermission)
+                else:
+                    print(f"Not granting permission for {feature}")
+                    self.setFeaturePermission(url, feature, QWebEnginePage.PermissionPolicy.DeniedPermission)
+        
+        self.page = WebPage(profile, self)
+        self.setPage(self.page)
+        
         # OKState coordinates
         self.okstate_lat = 36.1224
         self.okstate_lon = -97.0698
@@ -322,6 +372,10 @@ class MapWidget(QWebEngineView):
         self._dest_marker_id = None
         self._top3_marker_ids = []
 
+        # Setup static file serving
+        current_dir = Path(__file__).parent
+        self.static_dir = current_dir / 'static'
+        
         # Create HTML with Leaflet map
         self.load_map()
     
@@ -333,13 +387,176 @@ class MapWidget(QWebEngineView):
         if self.use_cached_tiles:
             # Use local tiles from cache
             print(f"Using cached map tiles from {self.map_cache_dir}")
-            html = ""
-            html += "<!DOCTYPE html>\n<html>\n<head>\n"
-            html += "<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />\n"
-            html += "<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n"
-            html += "<style>body { margin: 0; padding: 0; } #map { height: 100vh; width: 100vw; }</style>\n"
-            html += "</head>\n<body>\n<div id=\"map\"></div>\n<script>\n"
-            html += "var map = L.map('map').setView([" + str(okstate_lat) + ", " + str(okstate_lon) + "], 15);\n"
+            html = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="permissions-policy" content="geolocation=*">
+    <title>OSU Campus Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { height: 100vh; width: 100vw; }
+        .user-location-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .leaflet-control-attribution {
+            font-size: 11px;
+        }
+        .user-location-dot {
+            background-color: #4285f4;
+            border: 2px solid white;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            box-shadow: 0 0 3px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Location tracking functions
+        function updateUserLocationMarker(map, position) {
+            const latlng = [position.coords.latitude, position.coords.longitude];
+            
+            if (!userMarker) {
+                userMarker = L.marker(latlng, {
+                    icon: L.divIcon({
+                        className: 'user-location-marker',
+                        html: '<div class="user-location-dot"></div>'
+                    })
+                }).addTo(map);
+                
+                userCircle = L.circle(latlng, {
+                    radius: position.coords.accuracy,
+                    color: '#4285f4',
+                    fillColor: '#4285f433',
+                    fillOpacity: 0.2
+                }).addTo(map);
+                
+                map.setView(latlng, 16);
+            } else {
+                userMarker.setLatLng(latlng);
+                userCircle.setLatLng(latlng);
+                userCircle.setRadius(position.coords.accuracy);
+            }
+        }
+
+        function updateUserLocation(map) {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => updateUserLocationMarker(map, position),
+                    (error) => console.error("Error getting location:", error),
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    }
+                );
+            }
+        }
+
+        function initializeLocationTracking(map) {
+            // Create location control
+            const locationControl = L.control({position: 'bottomright'});
+            locationControl.onAdd = function(map) {
+                const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                div.innerHTML = `
+                    <a href="#" title="Center on my location" style="display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: white;">
+                        <svg viewBox="0 0 24 24" width="18" height="18">
+                            <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" fill="#666"/>
+                        </svg>
+                    </a>
+                `;
+                div.onclick = function() {
+                    updateUserLocation(map);
+                    return false;
+                };
+                return div;
+            };
+            locationControl.addTo(map);
+
+            // Start watching location
+            if ("geolocation" in navigator) {
+                navigator.geolocation.watchPosition(
+                    (position) => updateUserLocationMarker(map, position),
+                    (error) => console.error("Error getting location:", error),
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    }
+                );
+            }
+        }
+    </script>
+    <script>"""
+            
+            # Include the JavaScript code directly
+            with open(self.static_dir / 'js/location.js', 'r') as f:
+                location_js = f.read()
+            with open(self.static_dir / 'js/eta.js', 'r') as f:
+                eta_js = f.read()
+            
+            html += f"\n{location_js}\n{eta_js}\n"
+            html += f"""
+                // Create the map
+                var map = L.map('map').setView([{okstate_lat}, {okstate_lon}], 15);
+                
+                // Add OpenStreetMap tiles
+                L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19
+                }}).addTo(map);
+
+                // Make map globally accessible
+                window.map = map;
+                console.log('Map initialized');
+
+                // Add parking markers
+                var parkingData = {json.dumps(self.parking_places)};
+                console.log('Parking data:', parkingData);
+                
+                function colorForAvailable(avail) {{ 
+                    return avail > 7 ? '#15803d' : avail >= 4 ? '#f97316' : '#dc2626'; 
+                }}
+                
+                parkingData.forEach(function(p) {{
+                    var circle = L.circleMarker([p.lat, p.lon], {{
+                        radius: 10,
+                        color: colorForAvailable(p.available),
+                        fillColor: colorForAvailable(p.available),
+                        fillOpacity: 0.9
+                    }}).addTo(map);
+                    
+                    var popupHtml = '<b>' + p.name + '</b><br>Capacity: ' + p.capacity + 
+                                  '<br>Available: ' + p.available + 
+                                  (p.ada_spots ? '<br>ADA: ' + p.ada_spots : '');
+                    circle.bindPopup(popupHtml);
+                    
+                    var label = L.tooltip({{
+                        permanent: false,
+                        direction: 'top',
+                        offset: [0, -12]
+                    }}).setContent(p.name + ' (' + p.available + '/' + p.capacity + ')');
+                    circle.bindTooltip(label);
+                }});
+
+                // Initialize location tracking after a short delay
+                setTimeout(function() {{
+                    try {{
+                        console.log('Initializing location tracking...');
+                        initializeLocationTracking(map);
+                    }} catch (e) {{
+                        console.error('Error initializing location tracking:', e);
+                    }}
+                }}, 1000);
+            """
             html += "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors | Using cached tiles', maxZoom: 19 }).addTo(map);\n"
             # removed default campus marker per user request - map starts without the OSU pin
             html += "var parkingData = " + json.dumps(self.parking_places) + ";\n"
@@ -350,7 +567,7 @@ class MapWidget(QWebEngineView):
             html += "function clearHighlights() { try { if (window._destMarker) { map.removeLayer(window._destMarker); window._destMarker = null; } if (window._top3Markers) { window._top3Markers.forEach(function(m){ map.removeLayer(m); }); window._top3Markers = []; } if (window._distanceLine) { map.removeLayer(window._distanceLine); window._distanceLine = null; } if (window._selectedParking) { map.removeLayer(window._selectedParking); window._selectedParking = null; } } catch(e) { console.error(e); } }\n"
             html += "function addDestination(lat, lon, label) { clearHighlights(); window._destMarker = L.marker([lat, lon]).addTo(map); window._destMarker.bindPopup(label).openPopup(); map.setView([lat, lon], 16); }\n"
             html += "function showTop3(list) { try { clearHighlights(); window._top3Markers = []; list.forEach(function(p, i){ var m = L.circleMarker([p.lat, p.lon], { radius: 12, color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.95 }).addTo(map); m.bindTooltip((i+1) + '. ' + p.name + ' — Avail: ' + p.available); window._top3Markers.push(m); }); } catch(e) { console.error(e); } }\n"
-            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {riseOnHover: true}).addTo(map).bindPopup(destLabel + '<br>Distance: ' + distanceKm.toFixed(2) + ' km'); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
+            html += "function showDestinationAndParking(destLat, destLon, destLabel, parkLat, parkLon, parkLabel, distanceKm) { try { console.log('Showing dest and parking:', arguments); clearHighlights(); window._destMarker = L.marker([destLat, destLon], {riseOnHover: true}).addTo(map); const userLocation = getUserLocation(); if (userLocation) { const eta = updateETAInfo(destLat, destLon); if (eta) { destLabel += '<br><br>From your location:<br>🚶‍♂️ Walking: ' + eta.walking + '<br>🚲 Biking: ' + eta.biking + '<br>🚗 Driving: ' + eta.driving + '<br>📍 Distance: ' + eta.distance + ' km'; } } window._destMarker.bindPopup(destLabel + '<br><br>Distance to parking: ' + distanceKm.toFixed(2) + ' km').openPopup(); window._selectedParking = L.circleMarker([parkLat, parkLon], { radius: 14, color: '#7e22ce', fillColor: '#a855f7', fillOpacity: 0.95, weight: 2 }).addTo(map).bindTooltip(parkLabel).openTooltip(); window._distanceLine = L.polyline([[destLat, destLon], [parkLat, parkLon]], {color: '#7e22ce', weight: 3, opacity: 0.8, dashArray: '10,10'}).addTo(map); window._destMarker.openPopup(); var bounds = L.latLngBounds([[destLat, destLon], [parkLat, parkLon]]); bounds = bounds.pad(0.3); map.fitBounds(bounds); } catch(e) { console.error('Failed to show dest/parking:', e); } }\n"
             html += "</script>\n</body>\n</html>\n"
         else:
             print("No cached tiles found. Using online tiles. Run: python map_tile_downloader.py")
@@ -395,6 +612,27 @@ class MapWidget(QWebEngineView):
         except Exception as e:
             print("JS call failed:", e)
 
+    def show_route(self, start_lat, start_lon, dest_lat, dest_lon, info_text="Route"):
+        """Draw a simple polyline route from start to dest and show markers/popups with info_text.
+        This is an approximate visual route (straight line). For real routing, integrate a routing API.
+        """
+        js_info = json.dumps(info_text)
+        js = f"""
+        try {{
+            clearHighlights();
+            var s = L.marker([{start_lat}, {start_lon}]).addTo(map).bindPopup('Start').openPopup();
+            var d = L.marker([{dest_lat}, {dest_lon}]).addTo(map).bindPopup({js_info}).openPopup();
+            var line = L.polyline([[{start_lat}, {start_lon}], [{dest_lat}, {dest_lon}]], {{color: '#10b981', weight:4, opacity:0.9}}).addTo(map);
+            var bounds = L.latLngBounds([[{start_lat}, {start_lon}], [{dest_lat}, {dest_lon}]]).pad(0.3);
+            map.fitBounds(bounds);
+            window._destMarker = d; window._selectedParking = s; window._distanceLine = line;
+        }} catch(e) {{ console.error(e); }}
+        """
+        try:
+            self.page().runJavaScript(js)
+        except Exception as e:
+            print("JS call failed:", e)
+
     def set_view(self, lat, lon, zoom=15):
         js = f"try {{ map.setView([{lat}, {lon}], {zoom}); }} catch(e) {{ console.error(e); }};"
         try:
@@ -409,86 +647,7 @@ class MapWidget(QWebEngineView):
             print("JS call failed:", e)
 
 
-class FilterDropdown(QFrame):
-    """Integrated filter dropdown panel"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 2px solid #4CAF50;
-                border-radius: 5px;
-                padding: 5px;
-            }
-        """)
-        self.setFixedWidth(140)
-        
-        layout = QVBoxLayout()
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(3)
-        
-        # Filter buttons
-        self.cars_btn = QPushButton("Cars")
-        self.cars_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 3px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-            QPushButton:pressed {
-                background-color: #1d4ed8;
-            }
-        """)
-        layout.addWidget(self.cars_btn)
-        
-        self.motorcycle_btn = QPushButton("Motorcycle")
-        self.motorcycle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ef4444;
-                color: white;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 3px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #dc2626;
-            }
-            QPushButton:pressed {
-                background-color: #b91c1c;
-            }
-        """)
-        layout.addWidget(self.motorcycle_btn)
-        
-        self.bike_lane_btn = QPushButton("Bike Lane")
-        self.bike_lane_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #10b981;
-                color: white;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 3px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-            QPushButton:pressed {
-                background-color: #047857;
-            }
-        """)
-        layout.addWidget(self.bike_lane_btn)
-        
-        self.setLayout(layout)
+# FilterDropdown replaced by a QMenu popup (see filter_menu usage near top bar setup)
 
 
 class MainWindow(QMainWindow):
@@ -499,6 +658,8 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         # Store last searched destination for click handlers
         self._last_destination = None
+        # Initialize parking pass settings
+        self.selected_passes = self.load_passes()
         # Load persisted search history
         try:
             self._history_file = Path("search_history.json")
@@ -549,18 +710,24 @@ class MainWindow(QMainWindow):
                 background-color: #3d8b40;
             }
         """)
-        self.filter_btn.clicked.connect(self.toggle_filter_dropdown)
         filter_container_layout.addWidget(self.filter_btn)
-        
-        # Filter dropdown (initially hidden)
-        self.filter_dropdown = FilterDropdown()
-        self.filter_dropdown.hide()
-        filter_container_layout.addWidget(self.filter_dropdown)
-        
-        # Connect filter buttons
-        self.filter_dropdown.cars_btn.clicked.connect(lambda: self.select_filter("Cars"))
-        self.filter_dropdown.motorcycle_btn.clicked.connect(lambda: self.select_filter("Motorcycle"))
-        self.filter_dropdown.bike_lane_btn.clicked.connect(lambda: self.select_filter("Bike Lane"))
+
+        # Use a QMenu for the filter options so it appears above the QWebEngineView
+        self.filter_menu = QMenu(self)
+        act_cars = QAction("Cars", self)
+        act_motor = QAction("Motorcycle", self)
+        act_bike = QAction("Bike Lane", self)
+        self.filter_menu.addAction(act_cars)
+        self.filter_menu.addAction(act_motor)
+        self.filter_menu.addAction(act_bike)
+
+        # Connect actions to the same handler
+        act_cars.triggered.connect(lambda: self.select_filter("Cars"))
+        act_motor.triggered.connect(lambda: self.select_filter("Motorcycle"))
+        act_bike.triggered.connect(lambda: self.select_filter("Bike Lane"))
+
+        # Show menu when button clicked (positioned below the button)
+        self.filter_btn.clicked.connect(lambda: self.filter_menu.exec(self.filter_btn.mapToGlobal(QPoint(0, self.filter_btn.height()))))
         
         top_layout.addWidget(self.filter_container)
         # --- Search bar (beside filter) ---
@@ -615,16 +782,70 @@ class MainWindow(QMainWindow):
         self.home_btn.clicked.connect(self.go_home)
         top_layout.addWidget(self.home_btn)
 
+        # Settings button for pass selection
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #efefef;
+                padding: 6px 10px;
+                border-radius: 6px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e5e5e5;
+            }
+        """)
+        self.settings_btn.clicked.connect(self.show_settings)
+        top_layout.addWidget(self.settings_btn)
+
         layout.addWidget(top_frame)
+
+        # Initialize selected passes (load from settings if exists)
+        self.selected_passes = self.load_passes()
 
         # Replace previous POI approach: use explicit parking locations provided by the user.
         # User-provided primary locations (names kept minimal, coordinates provided). Longitudes use negative values for W.
         self.parking_places = [
-            {"name": "Student Union Garage", "lat": 36.1264, "lon": -97.0867, "capacity": 400, "available": 75},
-            {"name": "Colvin Recreation Center", "lat": 36.1287, "lon": -97.0818, "capacity": 250, "available": 40},
-            {"name": "University Commons West", "lat": 36.1287, "lon": -97.0664, "capacity": 300, "available": 55},
-            {"name": "Drummond Hall Lot", "lat": 36.1260, "lon": -97.0701, "capacity": 120, "available": 12},
-            {"name": "Physical Sciences Building Lot", "lat": 36.1242, "lon": -97.0664, "capacity": 180, "available": 20},
+            {
+                "name": "Student Union Garage", 
+                "lat": 36.1264, 
+                "lon": -97.0867, 
+                "capacity": 400, 
+                "available": 75,
+                "passes": ["staff", "green_commuter", "silver_commuter"]
+            },
+            {
+                "name": "Colvin Recreation Center", 
+                "lat": 36.1287, 
+                "lon": -97.0818, 
+                "capacity": 250, 
+                "available": 40,
+                "passes": ["staff", "green_commuter"]
+            },
+            {
+                "name": "University Commons West", 
+                "lat": 36.1287, 
+                "lon": -97.0664, 
+                "capacity": 300, 
+                "available": 55,
+                "passes": ["residence_hall", "staff"]
+            },
+            {
+                "name": "Drummond Hall Lot", 
+                "lat": 36.1260, 
+                "lon": -97.0701, 
+                "capacity": 120, 
+                "available": 12,
+                "passes": ["staff", "silver_commuter"]
+            },
+            {
+                "name": "Physical Sciences Building Lot", 
+                "lat": 36.1242, 
+                "lon": -97.0664, 
+                "capacity": 180, 
+                "available": 20,
+                "passes": ["staff", "green_commuter", "silver_commuter"]
+            },
         ]
 
         # Randomly assign a few ADA spots per lot (1-6, but not exceeding capacity)
@@ -678,6 +899,12 @@ class MainWindow(QMainWindow):
                 dup = any(abs(ex['lat'] - p['lat']) < 1e-5 and abs(ex['lon'] - p['lon']) < 1e-5 for p in self.parking_places)
                 if not dup:
                     ex['ada_spots'] = random.randint(1, min(4, max(1, ex['capacity'] // 50)))
+                    # Assign random passes to OSM parking places
+                    possible_passes = ["staff", "green_commuter", "silver_commuter", "residence_hall"]
+                    num_passes = random.randint(1, 3)
+                    ex['passes'] = random.sample(possible_passes, num_passes)
+                    if ex['ada_spots'] > 0:
+                        ex['passes'].append("ada")
                     self.parking_places.append(ex)
         except Exception as e:
             print('Overpass fetch skipped/failed:', e)
@@ -693,28 +920,61 @@ class MainWindow(QMainWindow):
         self.pull_up = PullUpWidget(parent=self)
         layout.addWidget(self.pull_up)
         
-    def toggle_filter_dropdown(self):
-        """Toggle the integrated filter dropdown"""
-        if self.filter_dropdown.isVisible():
-            self.hide_filter_dropdown()
-        else:
-            self.show_filter_dropdown()
-    
-    def show_filter_dropdown(self):
-        """Show filter dropdown"""
-        self.filter_dropdown.show()
-        self.filter_btn.setText("Filter ▲")
-    
-    def hide_filter_dropdown(self):
-        """Hide filter dropdown"""
-        self.filter_dropdown.hide()
-        self.filter_btn.setText("Filter ▼")
+    # Filter menu is implemented as a QMenu (see setup near top bar). Old
+    # toggle/show/hide methods for the previous FilterDropdown widget were removed.
     
     def select_filter(self, filter_type):
         """Handle filter selection"""
         print(f"Filter selected: {filter_type}")
-        # TODO: Apply filter to map markers/points
-        self.hide_filter_dropdown()
+        # Close the menu if it's open
+        try:
+            if hasattr(self, 'filter_menu'):
+                self.filter_menu.close()
+        except Exception:
+            pass
+        # Remember active filter
+        self.active_filter = filter_type
+
+        # If no destination is set yet, prompt user to search first
+        if not getattr(self, '_last_destination', None):
+            QMessageBox.information(self, "Filter", "Please search for a destination first.")
+            return
+
+        # Apply the selected filter to the last destination
+        dest = self._last_destination
+        try:
+            if filter_type in ("Cars", "Motorcycle"):
+                top3, recommendation = self.compute_nearest_parking(dest['lat'], dest['lon'])
+                # show top3 markers and populate pull-up
+                js_top3 = [{"name": p["name"], "lat": p["lat"], "lon": p["lon"], "capacity": p["capacity"], "available": p["available"], "distance_km": p["distance_km"]} for p in top3]
+                self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
+                if js_top3:
+                    self.map_widget.show_top3_markers(js_top3)
+                self.pull_up.set_results(dest['display_name'], top3, recommendation)
+                self.pull_up.expand()
+            elif filter_type == "Bike Lane":
+                # Show approximate shortest bike route from campus center to destination and estimate time
+                start_lat = self.map_widget.okstate_lat
+                start_lon = self.map_widget.okstate_lon
+                dist_km = self._haversine_km(start_lat, start_lon, dest['lat'], dest['lon'])
+                # assume average bike speed ~15 km/h
+                bike_speed_kmh = 15.0
+                minutes = (dist_km / bike_speed_kmh) * 60.0
+                info_text = f"Bike route — {dist_km:.2f} km — approx {int(minutes)} min"
+                # Use a new MapWidget helper to draw a route polyline and markers
+                try:
+                    self.map_widget.show_route(start_lat, start_lon, dest['lat'], dest['lon'], info_text)
+                except Exception:
+                    # fallback: just add destination marker
+                    self.map_widget.add_destination_marker(dest['lat'], dest['lon'], dest['display_name'])
+                # Populate pull-up with a concise bike info entry
+                bike_info = [{
+                    'name': 'Bike route', 'lat': dest['lat'], 'lon': dest['lon'], 'capacity': 0, 'available': 0, 'distance_km': dist_km
+                }]
+                self.pull_up.set_results(dest['display_name'], bike_info, None)
+                self.pull_up.expand()
+        except Exception as e:
+            print('select_filter failed:', e)
 
     def _haversine_km(self, lat1, lon1, lat2, lon2):
         # Haversine distance in kilometers
@@ -726,6 +986,62 @@ class MainWindow(QMainWindow):
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
         return R * c
+
+    def compute_nearest_parking(self, dest_lat, dest_lon):
+        """Compute enriched parking list sorted by distance and a recommendation.
+        Returns (top3_list, recommendation)
+        Each entry in lists is a dict with keys: name, lat, lon, capacity, available, distance_km, passes
+        """
+        enriched = []
+        try:
+            for p in self.parking_places:
+                spot_passes = set(p.get('passes', []))
+                if p.get('ada_spots', 0) > 0:
+                    spot_passes.add('ada')
+
+                active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
+                if not active_passes or (spot_passes & active_passes):
+                    d = self._haversine_km(dest_lat, dest_lon, p['lat'], p['lon'])
+                    enriched.append({
+                        'name': p['name'], 'lat': p['lat'], 'lon': p['lon'], 'capacity': p['capacity'], 'available': p['available'], 'distance_km': d, 'passes': list(spot_passes)
+                    })
+
+            enriched.sort(key=lambda x: x['distance_km'])
+            top3 = enriched[:3]
+
+            SIMILAR_DISTANCE_KM = 0.05
+            def color_for_avail(a):
+                if a > 7:
+                    return 'green'
+                if a >= 4:
+                    return 'orange'
+                return 'red'
+
+            candidates = [p for p in enriched if color_for_avail(p['available']) != 'red']
+            recommendation = None
+            if candidates:
+                closest = candidates[0]
+                group = [c for c in candidates if abs(c['distance_km'] - closest['distance_km']) <= SIMILAR_DISTANCE_KM]
+                if len(group) == 1:
+                    recommendation = closest
+                else:
+                    greens = [g for g in group if color_for_avail(g['available']) == 'green']
+                    if greens:
+                        greens.sort(key=lambda x: (-x['available'], x['distance_km']))
+                        recommendation = greens[0]
+                    else:
+                        oranges = [g for g in group if color_for_avail(g['available']) == 'orange']
+                        if oranges:
+                            oranges.sort(key=lambda x: (-x['available'], x['distance_km']))
+                            recommendation = oranges[0]
+                        else:
+                            group.sort(key=lambda x: (-x['available'], x['distance_km']))
+                            recommendation = group[0]
+
+            return top3, recommendation
+        except Exception as e:
+            print('compute_nearest_parking failed:', e)
+            return [], None
 
     def search_destination(self):
         """Search for a destination, show it on the map and populate pull-up with nearest parking info."""
@@ -805,18 +1121,30 @@ class MainWindow(QMainWindow):
             'display_name': display_name
         }
 
-        # Compute distances to parking places
+        # Compute distances to parking places with pass filtering
         enriched = []
         for p in self.parking_places:
-            d = self._haversine_km(dest_lat, dest_lon, p["lat"], p["lon"])
-            enriched.append({
-                "name": p["name"],
-                "lat": p["lat"],
-                "lon": p["lon"],
-                "capacity": p["capacity"],
-                "available": p["available"],
-                "distance_km": d
-            })
+            # Check if the parking spot is accessible with selected passes
+            spot_passes = set(p.get('passes', []))
+            if p.get('ada_spots', 0) > 0:
+                spot_passes.add('ada')
+            
+            # Get active passes (ones that are selected)
+            active_passes = {pass_id for pass_id, is_selected in self.selected_passes.items() if is_selected}
+            
+            # If no passes are selected, show all spots
+            # If passes are selected, only show spots that match at least one selected pass
+            if not active_passes or (spot_passes & active_passes):
+                d = self._haversine_km(dest_lat, dest_lon, p["lat"], p["lon"])
+                enriched.append({
+                    "name": p["name"],
+                    "lat": p["lat"],
+                    "lon": p["lon"],
+                    "capacity": p["capacity"],
+                    "available": p["available"],
+                    "distance_km": d,
+                    "passes": list(spot_passes)  # Include pass info for display
+                })
 
         enriched.sort(key=lambda x: x["distance_km"])
         top3 = enriched[:3]
@@ -898,6 +1226,101 @@ class MainWindow(QMainWindow):
             self.show_parking_for_user_passes(passes)
         except Exception as e:
             print("Failed to load user passes:", e)
+            
+    def load_passes(self):
+        """Load saved pass selections from file"""
+        try:
+            settings_file = Path("parking_settings.json")
+            if settings_file.exists():
+                with open(settings_file, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        # Default settings (all passes unchecked)
+        return {
+            "staff": False,
+            "green_commuter": False,
+            "silver_commuter": False,
+            "residence_hall": False,
+            "ada": False
+        }
+        
+    def save_passes(self):
+        """Save pass selections to file"""
+        try:
+            with open("parking_settings.json", 'w') as f:
+                json.dump(self.selected_passes, f)
+        except Exception as e:
+            print(f"Failed to save passes: {e}")
+            
+    def show_settings(self):
+        """Show settings dialog with pass selection"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Parking Pass Settings")
+        dialog.setFixedWidth(300)
+        layout = QVBoxLayout()
+        
+        # Create checkboxes for each pass type
+        passes = {
+            "staff": "Staff",
+            "green_commuter": "Green Commuter",
+            "silver_commuter": "Silver Commuter",
+            "residence_hall": "Residence Hall Maroon",
+            "ada": "ADA (Physical Handicap)"
+        }
+        
+        checkboxes = {}
+        for pass_id, pass_name in passes.items():
+            checkbox = QPushButton(pass_name)
+            checkbox.setCheckable(True)
+            checkbox.setChecked(self.selected_passes.get(pass_id, False))
+            checkbox.setStyleSheet("""
+                QPushButton {
+                    text-align: left;
+                    padding: 10px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 4px;
+                    margin: 2px;
+                }
+                QPushButton:checked {
+                    background-color: #93c5fd;
+                    border-color: #3b82f6;
+                }
+            """)
+            layout.addWidget(checkbox)
+            checkboxes[pass_id] = checkbox
+            
+        # Add a note about filtering
+        note = QLabel("Selected passes will filter parking search results\nto show only compatible parking spots.")
+        note.setStyleSheet("color: #6b7280; padding: 10px;")
+        note.setAlignment(Qt.AlignCenter)
+        layout.addWidget(note)
+        
+        # Save button
+        save_btn = QPushButton("Save")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2563eb;
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1d4ed8;
+            }
+        """)
+        layout.addWidget(save_btn)
+        
+        def save_settings():
+            for pass_id, checkbox in checkboxes.items():
+                self.selected_passes[pass_id] = checkbox.isChecked()
+            self.save_passes()
+            dialog.accept()
+            
+        save_btn.clicked.connect(save_settings)
+        dialog.setLayout(layout)
+        dialog.exec()
 
     def show_parking_for_user_passes(self, passes, center_lat=None, center_lon=None):
         """Filter parking_places by allowed_passes and availability and display results.

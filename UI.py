@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 import json
 import os
 # Use top-level imports so the script can be run directly (python UI.py)
@@ -72,24 +72,13 @@ class CarParkingApp:
                 data = {}
         else:
             data = {}
-        # Normalize old-format where value might be a plain password string
-        # New canonical structure: { username: {"password": ..., "passes": ["form 1", ...] } }
+        # Normalize data structure to just store password
         normalized = {}
         for k, v in data.items():
             if isinstance(v, dict):
-                # If old dict used 'form' key, convert to 'passes' list
-                if 'passes' in v:
-                    normalized[k] = v
-                elif 'form' in v:
-                    normalized[k] = {"password": v.get('password', ''), "passes": [v.get('form')]}
-                else:
-                    # keep existing dict but ensure passes key exists
-                    vv = dict(v)
-                    if 'passes' not in vv:
-                        vv['passes'] = []
-                    normalized[k] = vv
+                normalized[k] = {"password": v.get('password', '')}
             else:
-                normalized[k] = {"password": v, "passes": []}
+                normalized[k] = {"password": v}
         self.users = normalized
 
     def save_users(self):
@@ -169,8 +158,43 @@ class CarParkingApp:
         
         tokens = perform_password_grant(username, password)
         if tokens:
-            id_token = tokens.get("id_token")
-            self.show_main_page(id_token)
+            # Close the tkinter login window and launch the PySide6 main UI
+            try:
+                # persist current user info locally (if present in users store)
+                if username in self.users:
+                    self.users[username]['last_login'] = True
+                    self.save_users()
+            except Exception:
+                pass
+
+            try:
+                # Destroy the Tkinter root to end the Tk event loop cleanly
+                self.root.destroy()
+            except Exception:
+                pass
+
+            try:
+                # Provide username to the PySide app via environment variable
+                try:
+                    os.environ['PARKING_CURRENT_USER'] = username
+                except Exception:
+                    pass
+                # Import and run the PySide6 main application from MainUI_PySide6.py
+                # This calls MainUI_PySide6.main(), which creates its own QApplication and execs.
+                import MainUI_PySide6
+                # If the module has a main() function, call it.
+                if hasattr(MainUI_PySide6, 'main'):
+                    MainUI_PySide6.main()
+                else:
+                    # Fallback: execute as a script via subprocess
+                    import subprocess, sys
+                    subprocess.run([sys.executable, os.path.join(os.getcwd(), 'MainUI_PySide6.py')])
+            except Exception as e:
+                # If launching the main UI failed, show a messagebox (but app may have exited)
+                try:
+                    messagebox.showerror("Error", f"Failed to launch main UI: {e}")
+                except Exception:
+                    print("Failed to launch main UI:", e)
         else:
             messagebox.showerror("Error", "Invalid username or password!")
     
@@ -214,22 +238,6 @@ class CarParkingApp:
         
         self.confirm_password_entry = tk.Entry(inner_frame, font=("Arial", 14), bg='#4c1d95', fg='#faf5ff', width=25, show="●", relief=tk.FLAT, borderwidth=2, insertbackground='white')
         self.confirm_password_entry.grid(row=2, column=1, pady=12, padx=10, ipady=10)
-
-        # Passes selection - allow multiple passes via checkboxes
-        pass_label = tk.Label(inner_frame, text="Passes:", font=("Arial", 14, "bold"), bg='#312e81', fg='#e0e7ff')
-        pass_label.grid(row=4, column=0, sticky='nw', pady=12, padx=10)
-
-        # Create a small frame to hold checkboxes
-        passes_frame = tk.Frame(inner_frame, bg='#312e81')
-        passes_frame.grid(row=4, column=1, pady=12, padx=10, sticky='w')
-
-        self.pass_options = ["staff", "Green Commuter", "Silver Commuter", "Residence hall maroon", "ADA"]
-        self.new_pass_vars = {}
-        for i, opt in enumerate(self.pass_options):
-            var = tk.BooleanVar(value=False)
-            cb = tk.Checkbutton(passes_frame, text=opt, variable=var, bg='#312e81', fg='#e0e7ff', selectcolor='#4c1d95', activebackground='#312e81')
-            cb.grid(row=i//2, column=i%2, sticky='w', padx=6, pady=2)
-            self.new_pass_vars[opt] = var
         self.new_username_entry.focus_set()  # Set focus on username entry
         
         # Buttons Frame
@@ -249,14 +257,6 @@ class CarParkingApp:
         username = self.new_username_entry.get().strip()
         password = self.new_password_entry.get().strip()
         confirm = self.confirm_password_entry.get().strip()
-        # Collect selected passes (from checkboxes). If none selected, fall back to single 'form' choice
-        selected_passes = []
-        try:
-            for opt, var in getattr(self, 'new_pass_vars', {}).items():
-                if var.get():
-                    selected_passes.append(opt)
-        except Exception:
-            selected_passes = []
 
         
         if not username or not password or not confirm:
@@ -285,7 +285,7 @@ class CarParkingApp:
                 user_msg = formatted or "Failed to create user"
 
             try:
-                self.users[username] = {"password": password, "passes": selected_passes}
+                self.users[username] = {"password": password}
                 self.save_users()
             except Exception as e:
                 print("Warning: failed to save local user info:", e)
@@ -295,7 +295,7 @@ class CarParkingApp:
 
         # Persist locally as well
         try:
-            self.users[username] = {"password": password, "passes": selected_passes}
+            self.users[username] = {"password": password}
             self.save_users()
         except Exception as e:
             print("Warning: failed to save local user info:", e)
@@ -303,25 +303,7 @@ class CarParkingApp:
         messagebox.showinfo("Success", "Registration successful! You can now login.")
         self.show_login_page()
     
-    def show_main_page(self, username):
-        """Display the main parking system page after login"""
-        self.clear_window()
-        self.root.configure(bg='#0c4a6e')  # Deep ocean blue background
-        
-        # Title
-        title_label = tk.Label(self.root, text="Car Parking Management", font=("Arial", 26, "bold"), bg='#0c4a6e', fg='#7dd3fc')
-        title_label.pack(pady=50)
-        
-        # Options frame
-        options_frame = tk.Frame(self.root, bg='#0c4a6e')
-        options_frame.pack(pady=40)
-        
-        
-        # Logout button
-        logout_btn = tk.Button(self.root, text="Logout", font=("Arial", 13, "bold"), bg='#ef4444', fg='black', width=18, height=2, cursor='hand2', relief=tk.RAISED, borderwidth=3, activebackground='#dc2626', activeforeground='#ffffff', command=self.show_login_page)
-        logout_btn.pack(pady=30)
-
-    
+    # show_main_page removed: the login() method now launches the PySide6 main UI directly.
     def run(self):
         """Start the application"""
         self.root.mainloop()
